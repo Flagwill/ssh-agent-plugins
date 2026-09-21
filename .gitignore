@@ -1,0 +1,24 @@
+# Local connection settings and credentials
+*.env
+*.env.*
+!.env.example
+board.env
+ssh.env
+id_*
+*.pem
+*.key
+
+# Runtime and editor files
+__pycache__/
+*.py[cod]
+.DS_Store
+.idea/
+.vscode/
+
+# Local agent state/databases
+.codex/
+.opencode/
+*.db
+*.db-shm
+*.db-wal
+

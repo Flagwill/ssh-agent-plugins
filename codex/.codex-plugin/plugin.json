@@ -1,0 +1,24 @@
+{
+  "name": "ssh",
+  "version": "0.1.0",
+  "description": "Connect to arbitrary remote machines over SSH to run commands and transfer files.",
+  "author": {
+    "name": "Local developer"
+  },
+  "license": "MIT",
+  "keywords": ["ssh", "scp", "remote", "shell", "file-transfer"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SSH",
+    "shortDescription": "Operate any remote machine over SSH.",
+    "longDescription": "SSH connects to arbitrary remote machines using the system ssh and scp clients. It supports remote commands, uploads, and downloads with per-call host, user, port, and private-key overrides while keeping passwords in environment variables or a local ignored env file.",
+    "developerName": "Local developer",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Run a command on a remote host over SSH.",
+      "Upload a local file to a remote host.",
+      "Download a file from a remote host."
+    ]
+  }
+}

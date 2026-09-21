@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "ssh": {
+      "command": "python3",
+      "args": ["./server.py"],
+      "cwd": ".",
+      "env_vars": [
+        "SSH_HOST",
+        "SSH_USER",
+        "SSH_PORT",
+        "SSH_PASSWORD",
+        "SSH_IDENTITY_FILE",
+        "SSH_ENV_FILE",
+        "BOARD_SSH_HOST",
+        "BOARD_SSH_PORT",
+        "BOARD_SSH_PASSWORD",
+        "BOARD_SSH_IDENTITY_FILE",
+        "BOARD_SSH_ENV_FILE"
+      ]
+    }
+  }
+}
