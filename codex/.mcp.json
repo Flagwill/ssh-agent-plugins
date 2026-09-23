@@ -1,10 +1,16 @@
 {
   "mcpServers": {
     "ssh": {
-      "command": "python3",
-      "args": ["./server.py"],
+      "command": "cmd.exe",
+      "args": ["/d", "/s", "/c", "run-server.cmd"],
       "cwd": ".",
       "env_vars": [
+        "CODEX_PYTHON",
+        "CODEX_CONDA_ENV",
+        "CONDA_EXE",
+        "CONDA_PREFIX",
+        "USERPROFILE",
+        "LOCALAPPDATA",
         "SSH_HOST",
         "SSH_USER",
         "SSH_PORT",

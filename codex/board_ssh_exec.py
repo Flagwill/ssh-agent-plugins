@@ -7,15 +7,31 @@ backward-compatible alias for the original board plugin.
 """
 
 import os
-import pty
-import select
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 
+if os.name != "nt":
+    import pty
+    import select
+
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_PORT = "22"
+
+
+def write_text(stream: object, value: str) -> None:
+    """Write SSH output as UTF-8 even when the Windows console is GBK."""
+    data = value.encode("utf-8", errors="replace")
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(data)
+        buffer.flush()
+    else:
+        stream.write(value)
+        stream.flush()
 
 
 def load_env_file(path: Path) -> None:
@@ -136,6 +152,51 @@ def pty_run(argv: list[str], password: str) -> int:
         return 1
 
 
+def windows_run(argv: list[str], password: str) -> int:
+    """Run OpenSSH without a Unix pseudo-terminal.
+
+    Windows OpenSSH can use SSH_ASKPASS when forced.  This keeps passwords out
+    of the command line while still allowing the MCP server to run headlessly.
+    Key files and the Windows OpenSSH agent remain the preferred options.
+    """
+    env = os.environ.copy()
+    if password:
+        askpass = HERE / "win_askpass.cmd"
+        env.update(
+            {
+                "SSH_ASKPASS": str(askpass),
+                "SSH_ASKPASS_REQUIRE": "force",
+                "DISPLAY": "codex",
+                "SSH_PLUGIN_PASSWORD": password,
+            }
+        )
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(HERE),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        print(f"ssh: failed to start {argv[0]}: {exc}", file=sys.stderr)
+        return 127
+    if proc.stdout:
+        write_text(sys.stdout, proc.stdout)
+    if proc.stderr:
+        write_text(sys.stderr, proc.stderr)
+    return proc.returncode
+
+
+def run_ssh(argv: list[str], password: str) -> int:
+    if os.name == "nt":
+        return windows_run(argv, password)
+    return pty_run(argv, password)
+
+
 def main(argv: list[str]) -> int:
     try:
         options, mode, values = parse_args(argv)
@@ -151,6 +212,11 @@ def main(argv: list[str]) -> int:
         "-o",
         "ConnectTimeout=20",
     ]
+    if os.name == "nt":
+        # There is no interactive terminal behind an MCP tool call.  Askpass
+        # handles password auth; BatchMode prevents an unexpected prompt from
+        # hanging key/agent-authenticated calls.
+        common.extend(["-o", "BatchMode=no" if password else "BatchMode=yes"])
     if identity_file:
         common.extend(["-i", str(Path(identity_file).expanduser())])
 
@@ -159,18 +225,21 @@ def main(argv: list[str]) -> int:
             print("ssh: command is required for action=run", file=sys.stderr)
             return 2
         command = values[0]
-        return pty_run(["ssh", *common, "-p", port, target, command], password)
+        ssh = shutil.which("ssh") or "ssh"
+        return run_ssh([ssh, *common, "-p", port, target, command], password)
 
     if mode == "put" and len(values) >= 2:
         local, remote = values[0], values[1]
-        return pty_run(
-            ["scp", *common, "-P", port, local, f"{target}:{remote}"], password
+        scp = shutil.which("scp") or "scp"
+        return run_ssh(
+            [scp, *common, "-P", port, local, f"{target}:{remote}"], password
         )
 
     if mode == "get" and len(values) >= 2:
         remote, local = values[0], values[1]
-        return pty_run(
-            ["scp", *common, "-P", port, f"{target}:{remote}", local], password
+        scp = shutil.which("scp") or "scp"
+        return run_ssh(
+            [scp, *common, "-P", port, f"{target}:{remote}", local], password
         )
 
     print(f"ssh: expected action={mode} arguments", file=sys.stderr)

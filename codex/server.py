@@ -125,7 +125,10 @@ def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     if not HELPER.is_file():
         return tool_result(f"ssh: helper not found: {HELPER}", True)
 
-    argv = ["python3", str(HELPER)]
+    # Use the interpreter that launched the MCP server.  `python3` is not a
+    # standard command name on Windows, and the Codex runtime may be bundled
+    # rather than exposed on PATH.
+    argv = [sys.executable, str(HELPER)]
     append_option(argv, "--host", arguments.get("host"))
     append_option(argv, "--user", arguments.get("user"))
     append_option(argv, "--port", arguments.get("port"))
@@ -140,6 +143,8 @@ def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
             env=os.environ.copy(),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     except OSError as exc:

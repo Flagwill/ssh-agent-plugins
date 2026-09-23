@@ -26,11 +26,19 @@
 
 ## 目录说明
 
-### Codex
+### Codex（Windows）
 
-把 `codex/` 作为 Codex 插件目录使用。插件通过 `.mcp.json` 注册 `server.py`，默认启动命令为 `python3 ./server.py`。
+把 `codex/` 作为 Codex 插件目录使用。Windows 版本通过 `.mcp.json` 调用
+`run-server.cmd`，启动器会优先使用 Codex 自带的 Python 运行时，也支持通过
+`CODEX_PYTHON` 指定 Python 3 路径。
+
+也可以设置 `CODEX_CONDA_ENV` 为 Conda 环境名或环境目录；启动器会用该环境中的 Python
+运行 MCP 服务。
 
 配置可参考 `codex/board.env.example`，或设置 `SSH_HOST`、`SSH_USER`、`SSH_PORT`、`SSH_PASSWORD`、`SSH_IDENTITY_FILE` 等环境变量。
+
+Windows 使用系统 OpenSSH 的 `ssh.exe` 和 `scp.exe`；推荐使用 Windows OpenSSH Agent
+或私钥认证。
 
 ### OpenCode
 
