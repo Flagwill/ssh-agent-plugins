@@ -152,7 +152,7 @@ def pty_run(argv: list[str], password: str) -> int:
         return 1
 
 
-def windows_run(argv: list[str], password: str) -> int:
+def windows_run(argv: list[str], password: str, stdin_data: str | None = None) -> int:
     """Run OpenSSH without a Unix pseudo-terminal.
 
     Windows OpenSSH can use SSH_ASKPASS when forced.  This keeps passwords out
@@ -171,6 +171,11 @@ def windows_run(argv: list[str], password: str) -> int:
             }
         )
     try:
+        stdin_kwargs = (
+            {"stdin": subprocess.DEVNULL}
+            if stdin_data is None
+            else {"input": stdin_data}
+        )
         proc = subprocess.run(
             argv,
             cwd=str(HERE),
@@ -180,6 +185,7 @@ def windows_run(argv: list[str], password: str) -> int:
             encoding="utf-8",
             errors="replace",
             check=False,
+            **stdin_kwargs,
         )
     except OSError as exc:
         print(f"ssh: failed to start {argv[0]}: {exc}", file=sys.stderr)
@@ -191,9 +197,14 @@ def windows_run(argv: list[str], password: str) -> int:
     return proc.returncode
 
 
-def run_ssh(argv: list[str], password: str) -> int:
+def run_ssh(
+    argv: list[str], password: str, stdin_data: str | None = None
+) -> int:
     if os.name == "nt":
-        return windows_run(argv, password)
+        return windows_run(argv, password, stdin_data)
+    if stdin_data is not None:
+        print("ssh: remote stdin forwarding is only supported on Windows", file=sys.stderr)
+        return 2
     return pty_run(argv, password)
 
 
@@ -205,6 +216,11 @@ def main(argv: list[str]) -> int:
     except (ValueError, OSError) as exc:
         print(f"ssh: {exc}", file=sys.stderr)
         return 2
+
+    # The selected askpass flow uses its own password handoff. Do not let
+    # inherited legacy variables continue into the ssh/scp process environment.
+    os.environ.pop("SSH_PASSWORD", None)
+    os.environ.pop("BOARD_SSH_PASSWORD", None)
 
     common = [
         "-o",
@@ -226,7 +242,14 @@ def main(argv: list[str]) -> int:
             return 2
         command = values[0]
         ssh = shutil.which("ssh") or "ssh"
-        return run_ssh([ssh, *common, "-p", port, target, command], password)
+        sudo_stdin = (
+            password + "\n"
+            if password and command.lstrip().startswith("sudo -S")
+            else None
+        )
+        return run_ssh(
+            [ssh, *common, "-p", port, target, command], password, sudo_stdin
+        )
 
     if mode == "put" and len(values) >= 2:
         local, remote = values[0], values[1]

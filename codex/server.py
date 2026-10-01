@@ -39,6 +39,12 @@ TOOL_SCHEMA = {
             "type": "string",
             "description": "Path to a private key; overrides SSH_IDENTITY_FILE",
         },
+        "password": {
+            "type": "string",
+            "format": "password",
+            "writeOnly": True,
+            "description": "SSH password for this call; used by SSH askpass and never passed as an argument",
+        },
         "env_file": {
             "type": "string",
             "description": "Local env file containing SSH_* connection settings",
@@ -66,7 +72,10 @@ def tool_definition(name: str) -> dict[str, Any]:
         "description": (
             "Connect to any remote machine over SSH, run a shell command, or "
             "transfer files with SCP. Provide host/user/port per call or use "
-            "SSH_* environment variables. `board_ssh` is a compatibility alias."
+            "SSH_* environment variables. Password is passed in the helper "
+            "askpass flow and redacted from returned output. The MCP "
+            "writeOnly hint does not guarantee that every client masks it. "
+            "board_ssh is a compatibility alias."
         ),
         "inputSchema": TOOL_SCHEMA,
     }
@@ -107,23 +116,39 @@ def append_option(argv: list[str], option: str, value: Any) -> None:
 
 
 def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(arguments, dict):
+        return tool_result("ssh: arguments must be an object", True)
+
+    password_supplied = "password" in arguments
+    password = arguments.get("password")
+    if password_supplied:
+        if not isinstance(password, str) or not password:
+            return tool_result("ssh: password must be a non-empty string", True)
+        if any(char in password for char in (chr(0), chr(13), chr(10))):
+            return tool_result("ssh: password must not contain NUL or line breaks", True)
+
+    def result(message: str, is_error: bool = False) -> dict[str, Any]:
+        if password_supplied:
+            message = message.replace(password, "")
+        return tool_result(message, is_error)
+
     action = arguments.get("action", "run")
     if action == "run":
         command = arguments.get("command")
         if not command:
-            return tool_result("ssh: `command` is required for action=run", True)
+            return result("ssh: `command` is required for action=run", True)
         values = ["run", command]
     elif action in ("put", "get"):
         src = arguments.get("src")
         dst = arguments.get("dst")
         if not src or not dst:
-            return tool_result(f"ssh: `src` and `dst` are required for action={action}", True)
+            return result(f"ssh: `src` and `dst` are required for action={action}", True)
         values = [action, src, dst]
     else:
-        return tool_result(f"ssh: unknown action {action}", True)
+        return result(f"ssh: unknown action {action}", True)
 
     if not HELPER.is_file():
-        return tool_result(f"ssh: helper not found: {HELPER}", True)
+        return result(f"ssh: helper not found: {HELPER}", True)
 
     # Use the interpreter that launched the MCP server.  `python3` is not a
     # standard command name on Windows, and the Codex runtime may be bundled
@@ -136,11 +161,16 @@ def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     append_option(argv, "--env-file", arguments.get("env_file"))
     argv.extend(values)
 
+    # Keep per-call credentials out of argv and the server's shared environment.
+    child_env = os.environ.copy()
+    if password_supplied:
+        child_env["SSH_PASSWORD"] = password
+
     try:
         proc = subprocess.run(
             argv,
             cwd=str(PLUGIN_DIR),
-            env=os.environ.copy(),
+            env=child_env,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -148,10 +178,10 @@ def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
             check=False,
         )
     except OSError as exc:
-        return tool_result(f"ssh: failed to start helper: {exc}", True)
+        return result(f"ssh: failed to start helper: {exc}", True)
 
     output = f"exit={proc.returncode}\n{proc.stdout}{proc.stderr}"
-    return tool_result(output, proc.returncode != 0)
+    return result(output, proc.returncode != 0)
 
 
 def handle(request: dict[str, Any]) -> None:

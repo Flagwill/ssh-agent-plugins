@@ -1,6 +1,6 @@
 {
   "name": "ssh",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connect to arbitrary remote machines over SSH to run commands and transfer files.",
   "author": {
     "name": "Local developer"
@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "SSH",
     "shortDescription": "Operate any remote machine over SSH.",
-    "longDescription": "SSH connects to arbitrary remote machines using the system ssh and scp clients. It supports remote commands, uploads, and downloads with per-call host, user, port, and private-key overrides while keeping passwords in environment variables or a local ignored env file.",
+    "longDescription": "SSH connects to arbitrary remote machines using the system ssh and scp clients. It supports remote commands, uploads, and downloads with per-call host, user, port, and private-key overrides. It supports an optional per-call password for SSH askpass, never as a command-line argument. The MCP schema marks it writeOnly, though clients may still expose tool inputs in their UI or logs.",
     "developerName": "Local developer",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write"],

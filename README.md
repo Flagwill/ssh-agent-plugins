@@ -2,9 +2,11 @@
 
 本仓库存放本机当前整理出的 SSH 插件实现，按客户端分目录：
 
-- `codex/`：Codex MCP 插件，版本 `0.1.0`。
+- `codex/`：Codex MCP 插件，版本 `0.2.0`。
 - `opencode/`：OpenCode 原生插件实现，配套本机 OpenCode `v2.0.9`。
 - `openclaw/`：本机盘点时未发现 OpenClaw 可执行文件、配置目录或 SSH 插件源码，因此当前仅保留目录说明，不包含伪造实现。
+
+Codex 插件版本为 `0.2.0`，支持每次 SSH 调用单独传入密码；Codex MCP schema 会将密码标记为 writeOnly，但客户端是否隐藏或从日志中排除该输入取决于客户端实现。
 
 两个已归档实现都支持：
 
@@ -15,13 +17,13 @@
 
 ## 安全说明
 
-仓库只包含源码、示例配置和客户端适配器，不包含私钥、密码、真实主机、token 或本地运行状态。请通过环境变量或本地未跟踪的 env 文件提供连接信息；不要把真实凭据写进 Git。
+仓库只包含源码、示例配置和客户端适配器，不包含私钥、密码、真实主机、token 或本地运行状态。新调用建议通过 Codex SSH 工具的 password 字段按次传入密码；MCP writeOnly 标记不保证客户端一定隐藏或不记录该输入。旧版环境变量和未跟踪 env 文件仍为兼容方式，不要把真实凭据写进 Git。
 
 ## 版本盘点
 
 - Codex CLI：`0.149.0`
 - OpenCode：`v2.0.9`
-- Codex SSH 插件 manifest：`0.1.0`
+- Codex SSH 插件 manifest：`0.2.0`
 - OpenClaw：本机未安装/未发现，因此无可归档版本
 
 ## 目录说明
@@ -35,7 +37,7 @@
 也可以设置 `CODEX_CONDA_ENV` 为 Conda 环境名或环境目录；启动器会用该环境中的 Python
 运行 MCP 服务。
 
-配置可参考 `codex/board.env.example`，或设置 `SSH_HOST`、`SSH_USER`、`SSH_PORT`、`SSH_PASSWORD`、`SSH_IDENTITY_FILE` 等环境变量。
+每次调用建议直接传入 password 字段。旧版兼容配置仍支持 `SSH_PASSWORD`、`BOARD_SSH_PASSWORD` 和本地 env 文件；连接主机等设置可用 `SSH_HOST`、`SSH_USER`、`SSH_PORT`、`SSH_IDENTITY_FILE` 环境变量。
 
 Windows 使用系统 OpenSSH 的 `ssh.exe` 和 `scp.exe`；推荐使用 Windows OpenSSH Agent
 或私钥认证。
