@@ -1,7 +1,7 @@
 {
   "name": "ssh",
-  "version": "0.2.0",
-  "description": "Connect to arbitrary remote machines over SSH to run commands and transfer files.",
+  "version": "0.3.0",
+  "description": "Connect to arbitrary remote machines over SSH, run commands, transfer files, and use an interactive terminal.",
   "author": {
     "name": "Local developer"
   },
@@ -11,12 +11,12 @@
   "interface": {
     "displayName": "SSH",
     "shortDescription": "Operate any remote machine over SSH.",
-    "longDescription": "SSH connects to arbitrary remote machines using the system ssh and scp clients. It supports remote commands, uploads, and downloads with per-call host, user, port, and private-key overrides. It supports an optional per-call password for SSH askpass, never as a command-line argument. The MCP schema marks it writeOnly, though clients may still expose tool inputs in their UI or logs.",
+    "longDescription": "SSH connects to arbitrary remote machines using the system ssh and scp clients. It supports remote commands, uploads, downloads, per-call SSH passwords, and persistent interactive terminals with session IDs. Passwords are never command-line arguments. The MCP schema marks passwords writeOnly, though clients may still expose tool inputs in their UI or logs.",
     "developerName": "Local developer",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write"],
     "defaultPrompt": [
-      "Run a command on a remote host over SSH.",
+      "Run a command or open a persistent interactive terminal on a remote host over SSH.",
       "Upload a local file to a remote host.",
       "Download a file from a remote host."
     ]

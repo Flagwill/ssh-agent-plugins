@@ -136,6 +136,88 @@ def pty_run(argv: list[str], password: str) -> int:
         return 1
 
 
+def pty_terminal(argv: list[str], password: str) -> int:
+    """Run an SSH client on a local PTY and bridge tool input/output to it."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            os.execvp(argv[0], argv)
+        except Exception:
+            os._exit(127)
+
+    input_fd = sys.stdin.fileno()
+    input_open = True
+    sent = False
+    prompt_tail = b""
+    while True:
+        read_fds = [fd]
+        if input_open:
+            read_fds.append(input_fd)
+        try:
+            readable, _, _ = select.select(read_fds, [], [], 0.1)
+        except (OSError, ValueError):
+            break
+
+        if input_open and input_fd in readable:
+            try:
+                data = os.read(input_fd, 4096)
+            except OSError:
+                data = b""
+            if data:
+                try:
+                    os.write(fd, data)
+                except OSError:
+                    input_open = False
+            else:
+                input_open = False
+                try:
+                    os.write(fd, b"\x04")
+                except OSError:
+                    pass
+
+        if fd in readable:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                data = b""
+            if data:
+                os.write(1, data)
+                prompt_tail = (prompt_tail + data.lower())[-256:]
+                if password and not sent and any(
+                    prompt in prompt_tail
+                    for prompt in (b"password:", b"password", b"passphrase:")
+                ):
+                    time.sleep(0.15)
+                    os.write(fd, (password + "\n").encode("utf-8"))
+                    sent = True
+
+        try:
+            waited_pid, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return 1
+        if waited_pid == pid:
+            try:
+                while True:
+                    data = os.read(fd, 4096)
+                    if not data:
+                        break
+                    os.write(1, data)
+            except OSError:
+                pass
+            return os.waitstatus_to_exitcode(status)
+
+    try:
+        _, status = os.waitpid(pid, 0)
+        return os.waitstatus_to_exitcode(status)
+    except ChildProcessError:
+        return 1
+
+
+def terminal(argv: list[str], password: str) -> int:
+    """Start a persistent SSH client with a remote pseudo-terminal."""
+    return pty_terminal(argv, password)
+
+
 def main(argv: list[str]) -> int:
     try:
         options, mode, values = parse_args(argv)
@@ -144,6 +226,10 @@ def main(argv: list[str]) -> int:
     except (ValueError, OSError) as exc:
         print(f"ssh: {exc}", file=sys.stderr)
         return 2
+
+    # Passwords are handed to the selected client-side prompt flow only.
+    os.environ.pop("SSH_PASSWORD", None)
+    os.environ.pop("BOARD_SSH_PASSWORD", None)
 
     common = [
         "-o",
@@ -172,6 +258,15 @@ def main(argv: list[str]) -> int:
         return pty_run(
             ["scp", *common, "-P", port, f"{target}:{remote}", local], password
         )
+
+    if mode == "terminal":
+        if len(values) > 1:
+            print("ssh: action=terminal accepts at most one command", file=sys.stderr)
+            return 2
+        ssh_args = ["ssh", *common, "-tt", "-p", port, target]
+        if values and values[0]:
+            ssh_args.append(values[0])
+        return terminal(ssh_args, password)
 
     print(f"ssh: expected action={mode} arguments", file=sys.stderr)
     return 2

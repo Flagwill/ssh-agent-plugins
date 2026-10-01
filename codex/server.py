@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 
 PLUGIN_DIR = Path(__file__).resolve().parent
@@ -20,8 +23,8 @@ TOOL_SCHEMA = {
     "properties": {
         "action": {
             "type": "string",
-            "enum": ["run", "put", "get"],
-            "description": "run (default), put (upload), or get (download)",
+            "enum": ["run", "put", "get", "terminal"],
+            "description": "run (default), put (upload), get (download), or terminal (persistent SSH shell)",
         },
         "host": {
             "type": "string",
@@ -61,6 +64,22 @@ TOOL_SCHEMA = {
             "type": "string",
             "description": "Destination path: remote for put, local for get",
         },
+        "session_id": {
+            "type": "string",
+            "description": "Existing action=terminal session to continue",
+        },
+        "input": {
+            "type": "string",
+            "description": "Text or terminal control characters to send to the session",
+        },
+        "close": {
+            "type": "boolean",
+            "description": "Send EOF to an interactive terminal",
+        },
+        "wait_ms": {
+            "type": "integer",
+            "description": "Time to collect terminal output, 0-5000 ms (default 500)",
+        },
     },
     "additionalProperties": False,
 }
@@ -71,7 +90,8 @@ def tool_definition(name: str) -> dict[str, Any]:
         "name": name,
         "description": (
             "Connect to any remote machine over SSH, run a shell command, or "
-            "transfer files with SCP. Provide host/user/port per call or use "
+            "transfer files with SCP. Open a persistent interactive terminal "
+            "with action=terminal and continue it by session_id. Provide host/user/port per call or use "
             "SSH_* environment variables. Password is passed in the helper "
             "askpass flow and redacted from returned output. The MCP "
             "writeOnly hint does not guarantee that every client masks it. "
@@ -82,6 +102,29 @@ def tool_definition(name: str) -> dict[str, Any]:
 
 
 TOOLS = [tool_definition(name) for name in TOOL_NAMES]
+
+
+class TerminalSession:
+    def __init__(self, process: subprocess.Popen[bytes], password: str = ""):
+        self.process = process
+        self.password = password
+        self.output = bytearray()
+        self.lock = threading.Lock()
+
+    def append(self, data: bytes) -> None:
+        with self.lock:
+            self.output.extend(data)
+            if len(self.output) > 1_048_576:
+                del self.output[:-1_048_576]
+
+    def drain(self) -> str:
+        with self.lock:
+            data = bytes(self.output)
+            self.output.clear()
+        return data.decode("utf-8", errors="replace")
+
+
+TERMINALS: dict[str, TerminalSession] = {}
 
 
 def response(request_id: Any, result: dict[str, Any]) -> None:
@@ -115,6 +158,132 @@ def append_option(argv: list[str], option: str, value: Any) -> None:
         argv.extend([option, str(value)])
 
 
+def terminal_call(arguments: dict[str, Any], password: str) -> dict[str, Any]:
+    session_id = arguments.get("session_id")
+    terminal_input = arguments.get("input", "")
+    close = arguments.get("close", False)
+    wait_ms = arguments.get("wait_ms", 500)
+    command = arguments.get("command")
+
+    if session_id is not None and (not isinstance(session_id, str) or not session_id):
+        return tool_result("ssh: session_id must be a non-empty string", True)
+    if not isinstance(terminal_input, str):
+        return tool_result("ssh: input must be a string", True)
+    if not isinstance(close, bool):
+        return tool_result("ssh: close must be a boolean", True)
+    if isinstance(wait_ms, bool) or not isinstance(wait_ms, int):
+        return tool_result("ssh: wait_ms must be an integer", True)
+    if command is not None and not isinstance(command, str):
+        return tool_result("ssh: command must be a string", True)
+    wait_ms = max(0, min(wait_ms, 5000))
+
+    if session_id:
+        session = TERMINALS.get(session_id)
+        if session is None:
+            return tool_result(f"ssh: terminal session not found: {session_id}", True)
+        try:
+            if terminal_input and session.process.stdin and not session.process.stdin.closed:
+                session.process.stdin.write(terminal_input.encode("utf-8"))
+                session.process.stdin.flush()
+            if close and session.process.stdin and not session.process.stdin.closed:
+                session.process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            return tool_result(f"ssh: terminal input failed: {exc}", True)
+    else:
+        if close:
+            return tool_result("ssh: close can only be used with an existing session_id", True)
+        if not HELPER.is_file():
+            return tool_result(f"ssh: helper not found: {HELPER}", True)
+        if command is not None and not isinstance(command, str):
+            return tool_result("ssh: command must be a string", True)
+
+        argv = [sys.executable, str(HELPER)]
+        append_option(argv, "--host", arguments.get("host"))
+        append_option(argv, "--user", arguments.get("user"))
+        append_option(argv, "--port", arguments.get("port"))
+        append_option(argv, "--identity-file", arguments.get("identity_file"))
+        append_option(argv, "--env-file", arguments.get("env_file"))
+        argv.append("terminal")
+        if command:
+            argv.append(command)
+
+        child_env = os.environ.copy()
+        if password:
+            child_env["SSH_PASSWORD"] = password
+        try:
+            process = subprocess.Popen(
+                argv,
+                cwd=str(PLUGIN_DIR),
+                env=child_env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+        except OSError as exc:
+            message = f"ssh: failed to start terminal helper: {exc}"
+            if password:
+                message = message.replace(password, "")
+            return tool_result(message, True)
+
+        session_id = secrets.token_urlsafe(18)
+        session = TerminalSession(process, password)
+        TERMINALS[session_id] = session
+
+        def read_output(stream: BinaryIO | None) -> None:
+            if stream is None:
+                return
+            while True:
+                try:
+                    data = os.read(stream.fileno(), 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                session.append(data)
+
+        threading.Thread(
+            target=read_output, args=(process.stdout,), daemon=True
+        ).start()
+        if terminal_input and process.stdin:
+            try:
+                process.stdin.write(terminal_input.encode("utf-8"))
+                process.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+
+    if wait_ms:
+        time.sleep(wait_ms / 1000)
+    output = session.drain()
+    if session.password:
+        output = output.replace(session.password, "[REDACTED]")
+    status = session.process.poll()
+    state = "running" if status is None else f"exited={status}"
+    result = f"session_id={session_id}\n{state}\n{output}"
+    return tool_result(result, status not in (None, 0))
+
+
+def shutdown_terminals() -> None:
+    sessions = list(TERMINALS.values())
+    for session in sessions:
+        stream = session.process.stdin
+        if stream is not None and not stream.closed:
+            try:
+                stream.close()
+            except OSError:
+                pass
+    for session in sessions:
+        try:
+            session.process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            session.process.terminate()
+            try:
+                session.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                session.process.kill()
+    TERMINALS.clear()
+
+
 def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         return tool_result("ssh: arguments must be an object", True)
@@ -133,6 +302,8 @@ def call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
         return tool_result(message, is_error)
 
     action = arguments.get("action", "run")
+    if action == "terminal":
+        return terminal_call(arguments, password if password_supplied else "")
     if action == "run":
         command = arguments.get("command")
         if not command:
@@ -198,7 +369,7 @@ def handle(request: dict[str, Any]) -> None:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "ssh", "version": "0.2.0"},
+                "serverInfo": {"name": "ssh", "version": "0.3.0"},
             },
         )
     elif method == "tools/list":
@@ -216,13 +387,16 @@ def handle(request: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    for line in sys.stdin:
-        try:
-            request = json.loads(line)
-            if isinstance(request, dict):
-                handle(request)
-        except json.JSONDecodeError as exc:
-            error(None, -32700, f"Parse error: {exc}")
+    try:
+        for line in sys.stdin:
+            try:
+                request = json.loads(line)
+                if isinstance(request, dict):
+                    handle(request)
+            except json.JSONDecodeError as exc:
+                error(None, -32700, f"Parse error: {exc}")
+    finally:
+        shutdown_terminals()
     return 0
 
 
