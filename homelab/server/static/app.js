@@ -320,7 +320,17 @@
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/home/sw.js").catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller;
+    let refreshed = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      // 新 SW 接管(部署更新)后自动重载一次, 拿到新外壳
+      if (!hadController || refreshed) return;
+      refreshed = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register("/home/sw.js")
+      .then((reg) => reg.update())
+      .catch(() => {});
   }
   api("/home/api/me").then(boot).catch(() => {});
 })();

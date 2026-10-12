@@ -31,6 +31,26 @@ async def _strip_base(request: Request, call_next):
         request.scope["raw_path"] = request.scope["path"].encode()
     return await call_next(request)
 
+
+# 应用外壳(HTML/JS/CSS/SW)不缓存: 部署后刷新即生效, 避免 PWA 拿旧外壳。
+# 中间件顺序不保证, 故两种路径(带/不带 /home 前缀)都归一化后判断。
+_SHELL_PATHS = {"/", "/index.html", "/app.js", "/style.css", "/sw.js",
+                "/manifest.webmanifest"}
+
+
+@APP.middleware("http")
+async def _cache_control(request: Request, call_next):
+    resp = await call_next(request)
+    p = request.scope.get("path", "")
+    base = CFG.web_base
+    if base and (p == base or p.startswith(base + "/")):
+        p = p[len(base):] or "/"
+    if p.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+    elif p in _SHELL_PATHS:
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
 # ---------------------------------------------------------------- 工具函数
 
 def _client_ip(request: Request) -> str:
