@@ -78,8 +78,16 @@ Safari 打开 <https://flagw.apay.eu.cc/home> → 分享 → 添加到主屏幕�
 ```bash
 # ali 上一键重部署（root）
 tar xzf homelab.tgz -C /opt/homelab && chown -R mcp:mcp /opt/homelab
+install -m 644 /opt/homelab/deploy/homelab-{web,execd}.service /etc/systemd/system/
 systemctl restart homelab-web homelab-execd
 ```
+
+**沙箱说明（重要，勿回退）**：两个 unit 都**不**设 `PrivateTmp`/`ProtectHome`。
+execd 的职责就是执行人工批准的命令——私有 `/tmp` 会让已上传到真实 `/tmp` 的
+安装包/文件对命令不可见，`ProtectHome` 会阻断 `/root`、`/home` 读写；web 的
+`run_read` 同样需要看到真实 `/tmp`、`/home`。真正的边界是 nonce+人工审批+硬拒绝
+清单+审计，不是命名空间。web 的 SSH ControlMaster 目录因此在
+`/opt/homelab/run/ssh`（`ProtectSystem=strict` 下 `/tmp` 只读）。
 
 | 操作 | 命令 |
 |---|---|

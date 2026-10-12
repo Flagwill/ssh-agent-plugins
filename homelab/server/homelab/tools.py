@@ -286,6 +286,12 @@ def tool_sudo_run(ctx: Ctx, host: str = "", argv: list | None = None,
         audit.record(ctx.dbf, ctx.actor, "sudo_auto_allow", host, list(argv),
                      f"matched: {hit}", ctx.ip)
         result = dict(_exec_approved(ctx, ap["nonce"], host, list(argv)))
+        if result.get("rejected"):
+            result["status"] = "rejected"
+        elif result.get("ok") is False:
+            result["status"] = "failed"
+        else:
+            result["status"] = "executed"
         result["auto_allowed"] = True
         result["matched_rule"] = hit
         return result
@@ -325,8 +331,12 @@ def tool_sudo_wait(ctx: Ctx, nonce: str = "", wait_seconds: int = 25, **_):
             return {"error": "nonce 不存在"}
         st = v["state"]
         if st == "approved":
-            return {"status": "executed",
-                    **_exec_approved(ctx, nonce, v["host"], v["argv"])}
+            resp = _exec_approved(ctx, nonce, v["host"], v["argv"])
+            if resp.get("rejected"):
+                return {"status": "rejected", **resp}
+            if resp.get("ok") is False:
+                return {"status": "failed", **resp}
+            return {"status": "executed", **resp}
         if st == "consumed":
             return {"status": "consumed", "hint": "该请求已执行过(nonce 一次性)"}
         if st in ("denied", "expired"):

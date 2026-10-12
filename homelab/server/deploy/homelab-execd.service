@@ -4,13 +4,16 @@ After=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory=/opt/homelab
 Environment=HOMELAB_CONFIG=/opt/homelab/hosts.toml
+Environment=PYTHONPATH=/opt/homelab
 ExecStart=/usr/bin/python3 -m homelab.execd
 Restart=always
 RestartSec=2
+# 注意: 不设 PrivateTmp/ProtectHome —— execd 的职责就是执行人工批准的命令,
+# 私有 /tmp 会让已上传到真实 /tmp 的安装包/文件对命令不可见, ProtectHome 会
+# 阻断对 /root、/home 的读写。真正的边界是 nonce+人工审批+硬拒绝清单+审计。
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
 RuntimeDirectory=homelab-execd
 RuntimeDirectoryMode=0700
 UMask=0077

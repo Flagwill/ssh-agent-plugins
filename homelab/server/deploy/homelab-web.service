@@ -13,9 +13,9 @@ ExecStart=/usr/bin/python3 -m homelab.webapp
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
-PrivateTmp=true
+# 不设 PrivateTmp/ProtectHome: agent 的只读命令(run_read)要能看真实 /tmp 与 /home;
+# SSH ControlMaster 目录随之移到 /opt/homelab/run/ssh(ProtectSystem=strict 下 /tmp 只读)
 ProtectSystem=strict
-ProtectHome=true
 ReadWritePaths=/var/lib/homelab /var/log/homelab /opt/homelab
 ProtectKernelTunables=true
 ProtectKernelModules=true
