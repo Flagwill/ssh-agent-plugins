@@ -98,7 +98,7 @@ def auto_approve_active(dbf: str) -> bool:
     return auto_approve_until(dbf) > _now()
 
 
-def auto_approve_view(dbf: str, max_minutes: int = 120) -> dict:
+def auto_approve_view(dbf: str, max_minutes: int = 480) -> dict:
     until = auto_approve_until(dbf)
     left = max(0, until - _now())
     active = left > 0
@@ -113,7 +113,7 @@ def auto_approve_view(dbf: str, max_minutes: int = 120) -> dict:
 
 
 def set_auto_approve(dbf: str, minutes: int, by: str,
-                     max_minutes: int = 120) -> dict:
+                     max_minutes: int = 480) -> dict:
     """开启(minutes>0)或关闭(minutes<=0)自动批准窗口。minutes 上限受配置约束。"""
     if minutes <= 0:
         db.meta_set(dbf, AUTO_UNTIL_KEY, "0")

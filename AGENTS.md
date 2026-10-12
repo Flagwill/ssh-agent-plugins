@@ -104,7 +104,7 @@ agent 不该去服务器读源码（2026-10-12 的教训：三棒握手不直觉
 15 分钟过期。**已删除** `sudo_request`/`sudo_confirm` 两个旧工具名，别复活。
 
 自动批准窗口：控制台「审批」页可开一段时长（上限 `hosts.toml` 的
-`auto_approve_max_minutes`，默认 120 分钟），窗口内所有 root 请求自动批准执行，
+`auto_approve_max_minutes`，默认 480 分钟即 8 小时），窗口内所有 root 请求自动批准执行，
 实现为 `meta.auto_approve_until`（epoch 秒），`sudo_run` 创建后先查窗口，命中即
 `decide(decided_by=policy:auto-approve-window)` 再走 execd。仍全审计、硬拒绝不受影响。
 

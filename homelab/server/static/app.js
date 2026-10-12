@@ -165,7 +165,7 @@
     loadApprovals(); loadOverview();
   }
 
-  const AA_PRESETS = [10, 30, 60, 120];
+  const AA_PRESETS = [10, 30, 60, 120, 240, 480];
 
   function buildAutoPresets(maxMin) {
     const opts = AA_PRESETS.filter((m) => !maxMin || m <= maxMin);

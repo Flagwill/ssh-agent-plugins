@@ -72,8 +72,8 @@ ali 的 `systemctl reload caddy` 等。要加新条目改 hosts.toml 重启 home
 
 ## 自动批准窗口（PWA）
 
-控制台「审批」页顶部有 **⚡ 自动批准** 卡片：选一段时长（10/30/60/120 分钟或自定义，
-上限由 `hosts.toml` 的 `auto_approve_max_minutes` 控制，默认 120）开启后，窗口内
+控制台「审批」页顶部有 **⚡ 自动批准** 卡片：选一段时长（10/30/60/120/240/480 分钟或自定义，
+上限由 `hosts.toml` 的 `auto_approve_max_minutes` 控制，默认 480 即 8 小时）开启后，窗口内
 **所有** root 审批请求自动批准并执行；开启时会把当前所有待批请求一并批准。
 
 - 实现：窗口截止时间存 `meta.auto_approve_until`（epoch 秒），`sudo_run` 创建审批后
