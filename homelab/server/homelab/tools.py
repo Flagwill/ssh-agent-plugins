@@ -193,6 +193,37 @@ def tool_run_read(ctx: Ctx, host: str = "", program: str = "",
     return res
 
 
+def tool_run_user(ctx: Ctx, host: str = "", program: str = "",
+                  args: list | None = None, timeout: int = 120, **_):
+    """以【登录用户】(非 root)身份执行普通命令, 免审批。
+
+    适用: 跑脚本/查版本/下载打包等不需要 root 的日常操作。远端以 flagw 身份,
+    ali 本地以 mcp 身份执行(都是最低权限)。program 必须在 user_whitelist
+    (python3/node/npm/git/curl/tar/bash 等, 完整列表见 sudo_help)。
+    需要改系统/root 的操作请用 sudo_run。
+    """
+    args = args or []
+    h = ctx.cfg.host(host) if host else None
+    if h is None:
+        return {"error": f"unknown host: {host}"}
+    wl = set(ctx.cfg.data["exec"].get("user_whitelist", []))
+    if program not in wl:
+        return {"error": f"program '{program}' 不在用户级白名单",
+                "allowed": sorted(wl),
+                "hint": "只读统计用 run_read; 需要 root 用 sudo_run"}
+    joined = " ".join([program, *args])
+    hit = _deny_hit(ctx.cfg, joined)
+    if hit:
+        return {"error": f"命中拒绝规则 /{hit}/"}
+    if any(a.startswith("-i") or a in ("-w", "--follow") for a in args):
+        return {"error": "交互/跟踪参数不允许"}
+    timeout = max(5, min(int(timeout), 300))
+    res = sshutil.run(ctx.cfg, host, [program, *args], timeout=timeout)
+    if res.get("ok"):
+        res["stdout"] = res["stdout"][-20000:]
+    return res
+
+
 def tool_sentinel_events(ctx: Ctx, **_):
     res = sshutil.run(ctx.cfg, "raspi", ["python3", "-c", EVENTS_QUERY], timeout=20)
     if not res.get("ok"):
@@ -368,31 +399,43 @@ SUDO_PLAYBOOK = """
 
 四台服务器: ali(阿里云网关, 本机) / raspi(树莓派+摄像头) / asus(Clash 客户端) / cone(境外入口)。
 
-## 只读操作 → 免审批, 直接调用
-- host_status(host) / services(host) / logs(host, unit) / host_metrics(host)
-- run_read(host, program, args): 白名单命令(df/free/systemctl status/ss/journalctl 等)
-- sentinel_events / sentinel_clips: raspi 摄像头事件与录像
+## 三档执行模型(按需选, 不要越级)
+┌─────────────┬──────────────────────────────┬──────────┬─────────────────┐
+│ 档位         │ 工具                          │ 审批     │ 执行身份        │
+├─────────────┼──────────────────────────────┼──────────┼─────────────────┤
+│ 只读统计     │ run_read(白名单)               │ 不需要   │ flagw / mcp    │
+│ 普通命令     │ run_user(user_whitelist)       │ 不需要   │ flagw / mcp    │
+│ root 操作    │ sudo_run                       │ 需要*    │ root           │
+└─────────────┴──────────────────────────────┴──────────┴─────────────────┘
+* auto_allow 中的常用 systemctl restart/reload 除外(立即执行, 仍全审计)。
 
-## 变更操作(重启服务/装包/改文件) → 必须走审批, 就两步
-1. sudo_run(host, argv, reason) —— 唯一入口。命中 auto_allow(见下)立即执行;
-   否则返回 pending, 把 tell_user 的话转告用户。
-2. sudo_wait(nonce) 轮询(每次阻塞 25s)。用户在 https://flagw.apay.eu.cc/home
-   点批准后自动执行并返回结果。被拒/过期会如实返回, 不要重复申请同一命令。
+## 怎么选
+- 看状态/日志/磁盘/进程 → run_read(df, free, systemctl status, journalctl, ss...)
+- 跑脚本/查版本/下载打包/编译 → run_user(python3, node, npm, git, curl, tar, bash...)
+  run_user 以最低权限的登录用户执行, 不需要也不应该用它做系统变更。
+- 重启服务/装系统包/改系统文件 → sudo_run(host, argv, reason)
+
+## root 两步流程
+1. sudo_run(...) 命中 auto_allow → 立即执行; 否则 pending + tell_user(转告用户)
+2. sudo_wait(nonce) 轮询, 用户在 https://flagw.apay.eu.cc/home 批准后自动执行。
+   被拒/过期如实返回, 不要重复申请同一命令。
 
 ## 铁律
 - 不要自己拼 ssh/sudo 命令绕过审批, 也不要去服务器上读 homelab 源码——
   本指南即全部协议, 没有隐藏步骤。
-- rm -rf / 等破坏性命令会被永久拒绝(人工批准也不执行), 收到即为终态。
-- 每个 nonce 只能用一次、绑定 (host, argv) 逐字匹配、15 分钟过期。
+- 不需要 root 的操作不要用 sudo_run(它会以 root 执行且要审批)。
+- rm -rf / 等破坏性命令永久拒绝(人工批准也不执行), 收到即为终态。
+- nonce 一次性, 绑定 (host, argv) 逐字匹配, 15 分钟过期。
 """.strip()
 
 
 def tool_sudo_help(ctx: Ctx, **_):
     """完整使用指南: 何时要审批/审批流怎么走/示例/铁律。对流程不确定时先调用本工具。"""
     return {"playbook": SUDO_PLAYBOOK,
-            "auto_allow_now": sorted(set(
-                ctx.cfg.data["exec"].get("auto_allow", []))),
-            "deny_note": "rm -rf /、dd of=/dev/*、掐断 ssh/审计/fail2ban 等永久拒绝, 批准也不执行"}
+            "run_read_whitelist": sorted(set(ctx.cfg.readonly_whitelist)),
+            "run_user_whitelist": sorted(set(ctx.cfg.data["exec"].get("user_whitelist", []))),
+            "auto_allow_now": sorted(set(ctx.cfg.data["exec"].get("auto_allow", []))),
+            "deny_note": "rm -rf /、dd of=/dev/*、掐断 ssh/审计/fail2ban、裸 sudo/su 等永久拒绝, 批准也不执行"}
 
 
 def tool_pending(ctx: Ctx, **_):
@@ -470,6 +513,18 @@ TOOLS = [
           "args": {"type": "array", "items": {"type": "string"}}},
          ["host", "program"]),
      "annotations": {"readOnlyHint": True, "openWorldHint": True}},
+    {"name": "run_user",
+     "description": "以登录用户(非 root, 免审批)执行普通命令: python3/node/npm/git/"
+                    "curl/tar/bash 等白名单程序。日常非 root 操作用它; 只读统计用 run_read; "
+                    "需要 root 才用 sudo_run。例: run_user(host='cone', program='apt',"
+                    " args=['list','--upgradable'])",
+     "inputSchema": _schema(
+         {"host": {"type": "string"}, "program": {"type": "string"},
+          "args": {"type": "array", "items": {"type": "string"}},
+          "timeout": {"type": "integer"}},
+         ["host", "program"]),
+     "annotations": {"readOnlyHint": False, "destructiveHint": False,
+                     "idempotentHint": False, "openWorldHint": True}},
     {"name": "sentinel_events",
      "description": "raspi Sentinel 摄像头最近事件(数据库查询)",
      "inputSchema": _schema({}, []),
@@ -531,6 +586,7 @@ _DISPATCH = {
     "services": tool_services,
     "logs": tool_logs,
     "run_read": tool_run_read,
+    "run_user": tool_run_user,
     "sentinel_events": tool_sentinel_events,
     "sentinel_clips": tool_sentinel_clips,
     "sudo_run": tool_sudo_run,

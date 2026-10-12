@@ -28,29 +28,40 @@ ali(local) · raspi(:10003) · asus(:14098) · cone(182.255.88.7)  ← root/flag
 - **硬拒绝清单**：`rm -rf /`、`dd of=/dev/*`、掐断 ssh/审计/fail2ban 等，人工批准也不执行
 - **全审计**：每次工具调用/审批/执行都落 sqlite，控制台可查
 
-## 工具（MCP，15 个）
+## 工具（MCP，16 个）
 
 | 工具 | 说明 |
 |---|---|
 | `hosts` / `host_status` / `host_metrics` | 主机列表、实时状态、指标历史 |
 | `services` | systemd unit 与关键进程状态 |
 | `logs` | journalctl（只读，强制 `--no-pager`） |
-| `run_read` | 白名单只读命令自动执行 |
+| `run_read` | **只读白名单**命令自动执行（df/free/systemctl status/apt list…） |
+| `run_user` | **普通用户级**命令免审批执行（python3/node/npm/git/curl/tar/bash…41 项，`user_whitelist`），以登录用户身份（远端 flagw/ali 本地 mcp），**不碰 root** |
 | `sentinel_events` / `sentinel_clips` | raspi 摄像头事件库与录像列表 |
-| **`sudo_run`** | **root 执行的唯一入口**：命中 auto_allow 立即执行；否则返回 pending+nonce+`tell_user` |
+| **`sudo_run`** | **root 执行的唯一入口**：命中 `auto_allow` 立即执行；否则 pending+nonce+`tell_user` |
 | **`sudo_wait`** | 轮询审批并执行（阻塞 25s；批准即执行，返回 exit_code/stdout） |
 | `sudo_status` | 只查状态不执行 |
-| `sudo_help` | 完整 playbook（何时要审批/两步流程/铁律） |
+| `sudo_help` | 完整 playbook（三档模型/白名单/流程/铁律） |
 | `pending_approvals` / `audit_tail` / `agents` | 待批列表、审计、agent 吊销 |
 
-**典型 agent 流程**（工具描述内自包含，无需读源码）：
+**三档执行模型**（agent 按需选档，`sudo_help` 里有同样一张表）：
+
+| 档位 | 工具 | 审批 | 身份 |
+|---|---|---|---|
+| 只读统计 | `run_read` | 不需要 | flagw/mcp |
+| 普通命令 | `run_user` | 不需要 | flagw/mcp |
+| root 操作 | `sudo_run` | 需要* | root |
+
+\* `auto_allow` 常用 `systemctl restart/reload` 除外（立即执行，仍全审计）。
+
+**典型流程**：
 
 ```
+run_user("cone", "apt", ["list","--upgradable"])     # 免审批, flagw 身份
 sudo_run("cone", ["systemctl","restart","nginx"], "重启 nginx")
-  ├─ auto_allow 命中 → {status: executed, exit_code: 0}        # 秒级, 无需审批
-  └─ {status: pending, nonce, tell_user: "请打开…/home 批准"}
-        → (把 tell_user 转告用户)
-        → sudo_wait(nonce)   # 批准后自动执行; 被拒/过期如实返回
+  ├─ auto_allow 命中 → {status: executed}               # 秒级, 无需审批
+  └─ {status: pending, tell_user: "请打开…/home 批准"}
+        → sudo_wait(nonce)                              # 批准后自动执行
 ```
 
 **auto_allow**（hosts.toml 按主机配置，免审批但同样走 nonce+execd+审计）：

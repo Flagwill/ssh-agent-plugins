@@ -71,6 +71,18 @@ auto_allow = ["systemctl restart nginx", "systemctl restart xray",
 [exec]
 # auto_allow: 命中即免审批自动执行(仍走 nonce+execd+全审计, decided_by=policy:auto-allow)
 auto_allow = []
+
+# user_allow: 以【登录用户】(非 root)身份免审批执行的程序(run_user 工具)。
+# 适用于普通命令: 跑脚本/查版本/下载/打包/编译等不需要 root 的场景。
+# 执行身份: 远端=flagw, ali 本地=mcp(均最低权限)。
+user_whitelist = [
+  "python3", "python", "node", "npm", "pip", "pip3", "git", "make", "cmake",
+  "curl", "wget", "tar", "gzip", "gunzip", "unzip", "zip", "rsync",
+  "jq", "sqlite3", "echo", "grep", "awk", "sed", "sort", "head", "tail",
+  "cut", "tr", "wc", "diff", "patch", "date", "env", "printenv",
+  "bash", "sh", "ffmpeg", "ffprobe", "openssl", "screen", "tmux",
+]
+
 # 永久拒绝：即使人工批准也不执行（正则，忽略大小写，匹配 join(" ") 后的整行）
 deny_patterns = [
   'rm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(/|/\*|\$HOME|~|\s)($|\s)',
@@ -98,6 +110,7 @@ deny_patterns = [
   '/etc/homelab/keys',
   'kill\s+-9\s+-1',
   'mkfs\.',
+  '(^|\s)(sudo|su)\s',
 ]
 
 # 只读白名单：命中即自动执行、免审批
@@ -107,4 +120,5 @@ readonly_whitelist = [
   "systemctl", "journalctl", "dmesg", "sensors", "vcgencmd", "ls", "cat",
   "stat", "mount", "findmnt", "dpkg", "nginx", "certbot", "xray", "sing-box",
   "ping", "dig", "getent", "arp", "route", "vmstat", "iostat", "timedatectl",
+  "apt",
 ]
