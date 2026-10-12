@@ -26,6 +26,9 @@ label = "ali · 阿里云网关"
 kind = "local"
 units = ["ssh", "frps", "caddy", "sentinel-tunnel", "shadowsocks-libev",
          "homelab-web", "homelab-execd", "opencode-cookie-auth"]
+auto_allow = ["systemctl reload caddy", "systemctl restart frps",
+              "systemctl restart homelab-web", "systemctl restart homelab-execd",
+              "systemctl restart sentinel-tunnel", "systemctl restart caddy"]
 
 [hosts.raspi]
 label = "raspi · 树莓派监控"
@@ -35,6 +38,7 @@ host = "127.0.0.1"
 port = 10003
 exec_user = "root"
 units = ["sentinel", "frp_ssh", "ssh", "docker", "containerd"]
+auto_allow = ["systemctl restart sentinel", "systemctl restart frp_ssh"]
 
 [hosts.asus]
 label = "asus · Clash 客户端"
@@ -58,10 +62,15 @@ host = "182.255.88.7"
 port = 22
 exec_user = "root"
 units = ["nginx", "xray", "sing-box", "ssh", "fail2ban"]
+auto_allow = ["systemctl restart nginx", "systemctl restart xray",
+              "systemctl restart sing-box", "systemctl reload nginx",
+              "nginx -t", "certbot renew", "xray run -test -config /etc/xray/config.json"]
 
 # ---------------------------------------------------------------- 执行策略
 
 [exec]
+# auto_allow: 命中即免审批自动执行(仍走 nonce+execd+全审计, decided_by=policy:auto-allow)
+auto_allow = []
 # 永久拒绝：即使人工批准也不执行（正则，忽略大小写，匹配 join(" ") 后的整行）
 deny_patterns = [
   'rm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(/|/\*|\$HOME|~|\s)($|\s)',

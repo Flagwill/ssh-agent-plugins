@@ -28,7 +28,7 @@ ali(local) · raspi(:10003) · asus(:14098) · cone(182.255.88.7)  ← root/flag
 - **硬拒绝清单**：`rm -rf /`、`dd of=/dev/*`、掐断 ssh/审计/fail2ban 等，人工批准也不执行
 - **全审计**：每次工具调用/审批/执行都落 sqlite，控制台可查
 
-## 工具（MCP，14 个）
+## 工具（MCP，15 个）
 
 | 工具 | 说明 |
 |---|---|
@@ -37,8 +37,25 @@ ali(local) · raspi(:10003) · asus(:14098) · cone(182.255.88.7)  ← root/flag
 | `logs` | journalctl（只读，强制 `--no-pager`） |
 | `run_read` | 白名单只读命令自动执行 |
 | `sentinel_events` / `sentinel_clips` | raspi 摄像头事件库与录像列表 |
-| `sudo_request` / `sudo_status` / `sudo_confirm` | 审批三件套 |
+| **`sudo_run`** | **root 执行的唯一入口**：命中 auto_allow 立即执行；否则返回 pending+nonce+`tell_user` |
+| **`sudo_wait`** | 轮询审批并执行（阻塞 25s；批准即执行，返回 exit_code/stdout） |
+| `sudo_status` | 只查状态不执行 |
+| `sudo_help` | 完整 playbook（何时要审批/两步流程/铁律） |
 | `pending_approvals` / `audit_tail` / `agents` | 待批列表、审计、agent 吊销 |
+
+**典型 agent 流程**（工具描述内自包含，无需读源码）：
+
+```
+sudo_run("cone", ["systemctl","restart","nginx"], "重启 nginx")
+  ├─ auto_allow 命中 → {status: executed, exit_code: 0}        # 秒级, 无需审批
+  └─ {status: pending, nonce, tell_user: "请打开…/home 批准"}
+        → (把 tell_user 转告用户)
+        → sudo_wait(nonce)   # 批准后自动执行; 被拒/过期如实返回
+```
+
+**auto_allow**（hosts.toml 按主机配置，免审批但同样走 nonce+execd+审计）：
+cone 的 `systemctl restart nginx/xray/sing-box`、raspi 的 `systemctl restart sentinel/frp_ssh`、
+ali 的 `systemctl reload caddy` 等。要加新条目改 hosts.toml 重启 homelab-web 即可。
 
 ## 本地 harness 配置
 

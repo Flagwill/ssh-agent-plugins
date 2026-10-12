@@ -216,8 +216,45 @@ def tool_sentinel_clips(ctx: Ctx, limit: int = 20, **_):
 
 # ---------------------------------------------------------------- 审批工具
 
-def tool_sudo_request(ctx: Ctx, host: str = "", argv: list | None = None,
-                      reason: str = "", **_):
+def _auto_allowed(cfg, host_id: str, argv: list) -> str | None:
+    """命中 auto_allow(全局或按主机配置)则免审批自动执行。"""
+    cmd = " ".join(argv)
+    h = cfg.host(host_id) or {}
+    for pat in list(cfg.data["exec"].get("auto_allow", [])) + list(h.get("auto_allow", [])):
+        if cmd == pat or cmd.startswith(pat + " "):
+            return pat
+    return None
+
+
+def _exec_approved(ctx: Ctx, nonce: str, host_id: str, argv: list) -> dict:
+    """已批准的请求 → execd 执行(execd 内部再做原子核销与硬拒绝校验)。"""
+    payload = {"action": "exec", "nonce": nonce, "host": host_id,
+               "argv": argv, "agent": ctx.actor, "timeout": 120}
+    try:
+        resp = execd_call(ctx.cfg, payload, timeout=180)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"execd 调用失败: {type(e).__name__}: {e}"}
+    audit.record(ctx.dbf, ctx.actor, "sudo_exec", host_id, argv,
+                 f"nonce={nonce[:6]}… ok={resp.get('ok')} rc={resp.get('exit_code')}",
+                 ctx.ip)
+    return resp
+
+
+def tool_sudo_run(ctx: Ctx, host: str = "", argv: list | None = None,
+                  reason: str = "", **_):
+    """以 root 执行命令的唯一入口(自动处理审批)。
+
+    流程:
+      1. 调用本工具。命中 auto_allow(如常用 systemctl restart) → 立即执行,
+         返回 {status: executed, exit_code, stdout, ...};
+         否则返回 {status: pending, nonce}(审批请求已创建, 15 分钟过期)。
+      2. 若 pending: 把返回里 tell_user 的话原样转告用户, 然后调用
+         sudo_wait(nonce) —— 每次阻塞约 25 秒; 用户一旦在 Web 控制台批准,
+         当场以 root 执行并返回结果; 未决则返回 pending, 继续轮询即可。
+    不要自己拼 ssh/sudo 命令, 也不要去服务器上读 homelab 源码: 本描述即全部协议。
+    示例: sudo_run(host="cone", argv=["systemctl","restart","nginx"],
+                   reason="用户要求重启 nginx")
+    """
     argv = argv or []
     if not host or not argv:
         return {"error": "host 与 argv 必填"}
@@ -229,19 +266,33 @@ def tool_sudo_request(ctx: Ctx, host: str = "", argv: list | None = None,
     deny = check_deny(ctx.cfg, argv)
     if deny:
         return {"error": f"请求被拒绝: {deny}"}
-    # 频率熔断：同一 agent 10 分钟内 pending > 8 拒发
+    # 频率熔断: 同一 agent 10 分钟内 pending > 8 拒发
     since = int(time.time()) - 600
     row = db.query_one(
         ctx.dbf,
         "SELECT COUNT(*) AS n FROM approvals WHERE agent=? AND state='pending' AND created_at>?",
         (ctx.actor, since))
     if row and row["n"] >= 8:
-        return {"error": "pending 审批过多，已触发熔断（10 分钟内最多 8 个待批请求）"}
+        return {"error": "pending 审批过多, 已触发熔断(10 分钟内最多 8 个待批请求)"}
     ttl = ctx.cfg.approval_ttl_minutes
     summary = render_summary(h["label"], argv)
+
+    # auto_allow: 免审批, 但仍走 nonce+execd+审计(decided_by=policy:auto-allow)
+    hit = _auto_allowed(ctx.cfg, host, list(argv))
+    if hit:
+        ap = approvals.create(ctx.dbf, ctx.actor, host, list(argv),
+                              reason or "(auto-allow)", summary, ttl, ip=ctx.ip)
+        approvals.decide(ctx.dbf, ap["id"], "policy:auto-allow", True)
+        audit.record(ctx.dbf, ctx.actor, "sudo_auto_allow", host, list(argv),
+                     f"matched: {hit}", ctx.ip)
+        result = dict(_exec_approved(ctx, ap["nonce"], host, list(argv)))
+        result["auto_allowed"] = True
+        result["matched_rule"] = hit
+        return result
+
     ap = approvals.create(ctx.dbf, ctx.actor, host, list(argv), reason or "(未填)",
                           summary, ttl, ip=ctx.ip)
-    audit.record(ctx.dbf, ctx.actor, "sudo_request", host, argv,
+    audit.record(ctx.dbf, ctx.actor, "sudo_request", host, list(argv),
                  f"reason={reason} nonce={ap['nonce'][:6]}…", ctx.ip)
     return {
         "status": "pending",
@@ -249,12 +300,48 @@ def tool_sudo_request(ctx: Ctx, host: str = "", argv: list | None = None,
         "nonce": ap["nonce"],
         "summary": summary,
         "expires_in_minutes": ttl,
-        "how_to_approve": "在 PWA 控制台 https://flagw.apay.eu.cc/home 的「审批」页点批准；"
-                          "然后用 sudo_status 轮询、sudo_confirm 执行",
+        "tell_user": f"需要 root 权限: {summary}(原因: {reason or '未填'})。"
+                     f"请打开 https://flagw.apay.eu.cc/home 在「审批」页点批准, "
+                     f"批准后我会自动继续执行。",
+        "next_step": f"调用 sudo_wait(nonce=\"{ap['nonce']}\") 开始轮询; "
+                     "用户批准后会自动执行并返回结果",
     }
 
 
+def tool_sudo_wait(ctx: Ctx, nonce: str = "", wait_seconds: int = 25, **_):
+    """轮询审批并执行: 阻塞 wait_seconds 秒(默认 25, 最大 60)。
+
+    期间用户批准 → 立即以 root 执行, 返回 {status: executed, exit_code, stdout...};
+    被拒/过期 → 返回对应终态(denied/expired)与原因;
+    到时仍未决 → 返回 {status: pending, seconds_left}, 继续调用本工具即可。
+    """
+    if not nonce:
+        return {"error": "nonce 必填(来自 sudo_run 的返回)"}
+    wait_seconds = max(5, min(int(wait_seconds), 60))
+    deadline = time.time() + wait_seconds
+    while True:
+        v = approvals.status_view(ctx.dbf, nonce)
+        if not v:
+            return {"error": "nonce 不存在"}
+        st = v["state"]
+        if st == "approved":
+            return {"status": "executed",
+                    **_exec_approved(ctx, nonce, v["host"], v["argv"])}
+        if st == "consumed":
+            return {"status": "consumed", "hint": "该请求已执行过(nonce 一次性)"}
+        if st in ("denied", "expired"):
+            return {"status": st,
+                    "hint": "用户已拒绝" if st == "denied" else "审批已过期(15 分钟)",
+                    "summary": v["summary"]}
+        if time.time() >= deadline:
+            return {"status": "pending", "seconds_left": v["seconds_left"],
+                    "summary": v["summary"],
+                    "next_step": "继续调用 sudo_wait 轮询; 或提醒用户去控制台批准"}
+        time.sleep(2)
+
+
 def tool_sudo_status(ctx: Ctx, nonce: str = "", **_):
+    """只查询审批状态(不执行): pending/approved/denied/expired/consumed。"""
     if not nonce:
         return {"error": "nonce 必填"}
     v = approvals.status_view(ctx.dbf, nonce)
@@ -266,26 +353,36 @@ def tool_sudo_status(ctx: Ctx, nonce: str = "", **_):
             "decided_by": v["decided_by"]}
 
 
-def tool_sudo_confirm(ctx: Ctx, nonce: str = "", **_):
-    if not nonce:
-        return {"error": "nonce 必填"}
-    v = approvals.status_view(ctx.dbf, nonce)
-    if not v:
-        return {"error": "nonce 不存在"}
-    if v["state"] != "approved":
-        return {"status": v["state"],
-                "hint": "需先在 Web 控制台批准；批准后调用本工具执行"}
-    # 调 root 执行守护（它做二次校验 + 原子核销 + 执行）
-    payload = {"action": "exec", "nonce": nonce, "host": v["host"],
-               "argv": v["argv"], "agent": ctx.actor, "timeout": 120}
-    try:
-        resp = execd_call(ctx.cfg, payload, timeout=180)
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"execd 调用失败: {type(e).__name__}: {e}"}
-    audit.record(ctx.dbf, ctx.actor, "sudo_confirm", v["host"], v["argv"],
-                 f"nonce={nonce[:6]}… ok={resp.get('ok')} rc={resp.get('exit_code')}",
-                 ctx.ip)
-    return resp
+SUDO_PLAYBOOK = """
+# homelab 使用指南(拿不准就先读完这段)
+
+四台服务器: ali(阿里云网关, 本机) / raspi(树莓派+摄像头) / asus(Clash 客户端) / cone(境外入口)。
+
+## 只读操作 → 免审批, 直接调用
+- host_status(host) / services(host) / logs(host, unit) / host_metrics(host)
+- run_read(host, program, args): 白名单命令(df/free/systemctl status/ss/journalctl 等)
+- sentinel_events / sentinel_clips: raspi 摄像头事件与录像
+
+## 变更操作(重启服务/装包/改文件) → 必须走审批, 就两步
+1. sudo_run(host, argv, reason) —— 唯一入口。命中 auto_allow(见下)立即执行;
+   否则返回 pending, 把 tell_user 的话转告用户。
+2. sudo_wait(nonce) 轮询(每次阻塞 25s)。用户在 https://flagw.apay.eu.cc/home
+   点批准后自动执行并返回结果。被拒/过期会如实返回, 不要重复申请同一命令。
+
+## 铁律
+- 不要自己拼 ssh/sudo 命令绕过审批, 也不要去服务器上读 homelab 源码——
+  本指南即全部协议, 没有隐藏步骤。
+- rm -rf / 等破坏性命令会被永久拒绝(人工批准也不执行), 收到即为终态。
+- 每个 nonce 只能用一次、绑定 (host, argv) 逐字匹配、15 分钟过期。
+""".strip()
+
+
+def tool_sudo_help(ctx: Ctx, **_):
+    """完整使用指南: 何时要审批/审批流怎么走/示例/铁律。对流程不确定时先调用本工具。"""
+    return {"playbook": SUDO_PLAYBOOK,
+            "auto_allow_now": sorted(set(
+                ctx.cfg.data["exec"].get("auto_allow", []))),
+            "deny_note": "rm -rf /、dd of=/dev/*、掐断 ssh/审计/fail2ban 等永久拒绝, 批准也不执行"}
 
 
 def tool_pending(ctx: Ctx, **_):
@@ -346,7 +443,7 @@ TOOLS = [
          {"host": {"type": "string"}, "hours": {"type": "number"}}, ["host"]),
      "annotations": {"readOnlyHint": True, "openWorldHint": True}},
     {"name": "services",
-     "description": "主机 systemd unit 与关键进程状态(来自巡检)",
+     "description": "主机 systemd unit 与关键进程状态(来自巡检)。需要重启服务时用 sudo_run(host, [\"systemctl\",\"restart\",unit])",
      "inputSchema": _schema({"host": {"type": "string"}}, ["host"]),
      "annotations": {"readOnlyHint": True, "openWorldHint": True}},
     {"name": "logs",
@@ -357,7 +454,7 @@ TOOLS = [
          ["host"]),
      "annotations": {"readOnlyHint": True, "openWorldHint": True}},
     {"name": "run_read",
-     "description": "在主机上执行白名单只读命令(df/free/systemctl status/ss 等), 免审批",
+     "description": "在主机上执行白名单只读命令(df/free/systemctl status/ss 等), 免审批。注意: 需要【变更】系统(重启服务/安装/改文件)时不要用本工具, 用 sudo_run",
      "inputSchema": _schema(
          {"host": {"type": "string"}, "program": {"type": "string"},
           "args": {"type": "array", "items": {"type": "string"}}},
@@ -371,9 +468,12 @@ TOOLS = [
      "description": "raspi Sentinel 录像片段列表",
      "inputSchema": _schema({"limit": {"type": "integer"}}, []),
      "annotations": {"readOnlyHint": True, "openWorldHint": True}},
-    {"name": "sudo_request",
-     "description": "申请 root 提权执行命令(白名单外)。提交后在 PWA 控制台等人工批准; "
-                    "批准后用 sudo_status 轮询、sudo_confirm 执行。一次性、15 分钟过期。",
+    {"name": "sudo_run",
+     "description": "以 root 执行命令的唯一入口(自动审批)。命中 auto_allow 立即执行; "
+                    "否则创建 15 分钟一次性审批请求并返回 pending+nonce, "
+                    "此时把 tell_user 转告用户, 然后调用 sudo_wait(nonce) 轮询, "
+                    "批准后自动执行并返回结果。例: "
+                    "sudo_run(host='cone', argv=['systemctl','restart','nginx'], reason='重启 nginx')",
      "inputSchema": _schema(
          {"host": {"type": "string"},
           "argv": {"type": "array", "items": {"type": "string"},
@@ -382,15 +482,24 @@ TOOLS = [
          ["host", "argv"]),
      "annotations": {"readOnlyHint": False, "destructiveHint": True,
                      "idempotentHint": False, "openWorldHint": True}},
-    {"name": "sudo_status",
-     "description": "查询审批请求状态(pending/approved/denied/expired/consumed)",
-     "inputSchema": _schema({"nonce": {"type": "string"}}, ["nonce"]),
-     "annotations": {"readOnlyHint": True, "openWorldHint": True}},
-    {"name": "sudo_confirm",
-     "description": "批准后执行已批准的 root 命令(一次性核销)",
-     "inputSchema": _schema({"nonce": {"type": "string"}}, ["nonce"]),
+    {"name": "sudo_wait",
+     "description": "轮询审批并执行: 阻塞最多 wait_seconds 秒(默认25)。用户批准后立即以 root "
+                    "执行并返回结果; 被拒/过期返回终态; 未决返回 pending(继续调用即可)。"
+                    "nonce 来自 sudo_run。",
+     "inputSchema": _schema(
+         {"nonce": {"type": "string"}, "wait_seconds": {"type": "integer"}},
+         ["nonce"]),
      "annotations": {"readOnlyHint": False, "destructiveHint": True,
                      "idempotentHint": False, "openWorldHint": True}},
+    {"name": "sudo_status",
+     "description": "只查询审批状态(不执行): pending/approved/denied/expired/consumed",
+     "inputSchema": _schema({"nonce": {"type": "string"}}, ["nonce"]),
+     "annotations": {"readOnlyHint": True, "openWorldHint": True}},
+    {"name": "sudo_help",
+     "description": "完整使用指南: 只读工具清单/审批两步流程/auto_allow 名单/铁律。"
+                    "对'某操作要不要审批、下一步调什么'不确定时, 先调用本工具",
+     "inputSchema": _schema({}, []),
+     "annotations": {"readOnlyHint": True, "openWorldHint": True}},
     {"name": "pending_approvals",
      "description": "当前 pending 的审批请求列表",
      "inputSchema": _schema({}, []),
@@ -414,9 +523,10 @@ _DISPATCH = {
     "run_read": tool_run_read,
     "sentinel_events": tool_sentinel_events,
     "sentinel_clips": tool_sentinel_clips,
-    "sudo_request": tool_sudo_request,
+    "sudo_run": tool_sudo_run,
+    "sudo_wait": tool_sudo_wait,
     "sudo_status": tool_sudo_status,
-    "sudo_confirm": tool_sudo_confirm,
+    "sudo_help": tool_sudo_help,
     "pending_approvals": tool_pending,
     "audit_tail": tool_audit_tail,
     "agents": tool_agents,

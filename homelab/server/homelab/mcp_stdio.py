@@ -70,9 +70,12 @@ class Server:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "homelab", "version": "1.0.0"},
                 "instructions":
-                    "统一管理 raspi/asus/ali/cone 四台服务器。只读工具免审批; "
-                    "白名单外的 root 操作用 sudo_request 申请, 在 PWA 控制台"
-                    "(https://flagw.apay.eu.cc/home)批准后以 sudo_confirm 执行。",
+                    "统一管理 raspi/asus/ali/cone 四台服务器。"
+                    "【只读】host_status/services/logs/host_metrics/run_read/sentinel_* 免审批直接用。"
+                    "【变更系统】必须用 sudo_run(host, argv, reason): 命中 auto_allow 立即执行; "
+                    "否则返回 pending —— 把 tell_user 转告用户去 https://flagw.apay.eu.cc/home 批准, "
+                    "然后 sudo_wait(nonce) 轮询, 批准后自动执行。禁止自行拼 ssh/sudo 命令, "
+                    "也不要去服务器读 homelab 源码; 流程疑问先调 sudo_help。",
             }}
         if method in ("notifications/initialized", "initialized",
                       "notifications/cancelled", "notifications/roots/list_changed"):
