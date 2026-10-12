@@ -1,0 +1,6 @@
+# ali Caddyfile 增量：在 https://flagw.apay.eu.cc 站点的兜底 handle 之前插入
+# 注意用 handle(不剥前缀)，/home 前缀由 homelab webapp 中间件剥离
+#
+# 	handle /home* {
+# 		reverse_proxy 127.0.0.1:8790
+# 	}

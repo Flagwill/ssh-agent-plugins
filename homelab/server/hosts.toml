@@ -1,0 +1,101 @@
+# homelab  fleet 配置（部署于 ali:/opt/homelab/hosts.toml）
+
+[general]
+db = "/var/lib/homelab/homelab.db"
+static = "/opt/homelab/static"
+listen = "127.0.0.1:8790"
+execd_socket = "/run/homelab-execd.sock"
+# web/collector(用户 mcp)使用的私钥; ssh 要求私钥不可组读, 故与 root_key 分放
+key = "/opt/homelab/etc/keys/id_hosts"
+root_key = "/etc/homelab/keys/id_hosts"
+known_hosts = "/etc/homelab/known_hosts"
+control_dir = "/tmp/homelab-ssh"
+session_ttl_days = 30
+approval_ttl_minutes = 15
+collect_interval = 60
+metrics_retention_days = 7
+
+[web]
+base_path = "/home"
+
+# ---------------------------------------------------------------- 主机
+# kind=local 本机直执行; kind=ssh 走 key 登录。exec_user 为提权执行用户。
+
+[hosts.ali]
+label = "ali · 阿里云网关"
+kind = "local"
+units = ["ssh", "frps", "caddy", "sentinel-tunnel", "shadowsocks-libev",
+         "homelab-web", "homelab-execd", "opencode-cookie-auth"]
+
+[hosts.raspi]
+label = "raspi · 树莓派监控"
+kind = "ssh"
+user = "flagw"
+host = "127.0.0.1"
+port = 10003
+exec_user = "root"
+units = ["sentinel", "frp_ssh", "ssh", "docker", "containerd"]
+
+[hosts.asus]
+label = "asus · Clash 客户端"
+kind = "ssh"
+user = "flagw"
+host = "127.0.0.1"
+port = 14098
+exec_user = "root"
+units = ["ssh"]
+procs = [
+  { label = "clash-verge", match = "verge-mihomo" },
+  { label = "openclaw", match = "openclaw" },
+  { label = "frpc", match = "frpc" },
+]
+
+[hosts.cone]
+label = "cone · 境外入口"
+kind = "ssh"
+user = "flagw"
+host = "182.255.88.7"
+port = 22
+exec_user = "root"
+units = ["nginx", "xray", "sing-box", "ssh", "fail2ban"]
+
+# ---------------------------------------------------------------- 执行策略
+
+[exec]
+# 永久拒绝：即使人工批准也不执行（正则，忽略大小写，匹配 join(" ") 后的整行）
+deny_patterns = [
+  'rm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(/|/\*|\$HOME|~|\s)($|\s)',
+  'rm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+\S*/(opt/homelab|var/lib/homelab|var/log/homelab|etc/homelab)',
+  '\b(mkfs|fdisk|parted)\b',
+  '\bdd\b[^|]*\bof=/dev/',
+  '>\s*/dev/(sd|vd|nvme|xvd)',
+  '\b(shutdown|poweroff|halt|reboot)\b',
+  'init\s+[06]',
+  ':\(\)\s*\{',
+  'chmod\s+(-R\s+)?0{3,7}\s+/',
+  'chmod\s+-R\s+777\s+/',
+  '\buserdel\b',
+  'passwd\s+-[a-zA-Z]*d',
+  '--vacuum',
+  '(sudo-mcp\.log|/var/log/(auth|syslog)|homelab\.db)',
+  'systemctl\s+(stop|disable|mask)\s+(ssh|sshd|fail2ban|homelab-[a-z]+)',
+  'iptables\s+-P\s+INPUT\s+DROP',
+  'iptables\s+-F',
+  'ufw\s+(enable|default\s+deny)',
+  'cryptsetup',
+  '>\s*/etc/(passwd|shadow|gshadow|sudoers)',
+  '(visudo|/etc/sudoers|sshd_config)',
+  'authorized_keys',
+  '/etc/homelab/keys',
+  'kill\s+-9\s+-1',
+  'mkfs\.',
+]
+
+# 只读白名单：命中即自动执行、免审批
+readonly_whitelist = [
+  "df", "du", "free", "uptime", "uname", "nproc", "lscpu", "hostnamectl",
+  "lsblk", "id", "who", "w", "last", "ps", "ss", "ip", "netstat", "ifconfig",
+  "systemctl", "journalctl", "dmesg", "sensors", "vcgencmd", "ls", "cat",
+  "stat", "mount", "findmnt", "dpkg", "nginx", "certbot", "xray", "sing-box",
+  "ping", "dig", "getent", "arp", "route", "vmstat", "iostat", "timedatectl",
+]

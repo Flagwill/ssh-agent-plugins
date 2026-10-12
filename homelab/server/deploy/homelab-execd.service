@@ -1,0 +1,19 @@
+[Unit]
+Description=homelab root exec daemon (nonce-validated, argv-only)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=HOMELAB_CONFIG=/opt/homelab/hosts.toml
+ExecStart=/usr/bin/python3 -m homelab.execd
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+RuntimeDirectory=homelab-execd
+RuntimeDirectoryMode=0700
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

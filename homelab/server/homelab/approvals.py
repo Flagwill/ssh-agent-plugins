@@ -1,0 +1,113 @@
+"""审批流：nonce 一次性凭证。创建 → Web 批准 → MCP confirm 时被 execd 核销。"""
+from __future__ import annotations
+
+import json
+import secrets
+import time
+
+from . import db
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+def create(dbf: str, agent: str, host_id: str, argv: list[str],
+           reason: str, summary: str, ttl_minutes: int, ip: str = "") -> dict:
+    rid = secrets.token_hex(6)
+    nonce = secrets.token_urlsafe(18)
+    created = _now()
+    # argv/host 的规范化指纹存入 argv_json（逐字匹配用）
+    db.execute(
+        dbf,
+        "INSERT INTO approvals(id, nonce, agent, host, argv_json, reason, summary,"
+        " state, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (rid, nonce, agent, host_id, db.jdump(argv), reason, summary,
+         "pending", created, created + ttl_minutes * 60))
+    return {"id": rid, "nonce": nonce, "state": "pending",
+            "expires_at": created + ttl_minutes * 60}
+
+
+def get_by_nonce(dbf: str, nonce: str) -> dict | None:
+    return db.query_one(dbf, "SELECT * FROM approvals WHERE nonce=?", (nonce,))
+
+
+def get(dbf: str, rid: str) -> dict | None:
+    return db.query_one(dbf, "SELECT * FROM approvals WHERE id=?", (rid,))
+
+
+def sweep_expired(dbf: str) -> None:
+    db.execute(
+        dbf,
+        "UPDATE approvals SET state='expired' WHERE state='pending' AND expires_at<?",
+        (_now(),))
+
+
+def list_recent(dbf: str, state: str = "", limit: int = 50) -> list[dict]:
+    if state:
+        rows = db.query_all(
+            dbf,
+            "SELECT * FROM approvals WHERE state=? ORDER BY created_at DESC LIMIT ?",
+            (state, limit))
+    else:
+        rows = db.query_all(
+            dbf, "SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?", (limit,))
+    for r in rows:
+        if r["state"] == "pending" and r["expires_at"] < _now():
+            r["state"] = "expired"
+    return rows
+
+
+def decide(dbf: str, rid: str, by: str, approve: bool) -> dict | None:
+    row = db.query_one(dbf, "SELECT * FROM approvals WHERE id=?", (rid,))
+    if not row or row["state"] != "pending":
+        return row
+    if row["expires_at"] < _now():
+        db.execute(dbf, "UPDATE approvals SET state='expired' WHERE id=?", (rid,))
+        row["state"] = "expired"
+        return row
+    db.execute(
+        dbf,
+        "UPDATE approvals SET state=?, decided_at=?, decided_by=? WHERE id=? AND state='pending'",
+        ("approved" if approve else "denied", _now(), by, rid))
+    row = dict(row)
+    row["state"] = "approved" if approve else "denied"
+    row["decided_by"] = by
+    row["decided_at"] = _now()
+    return row
+
+
+def status_view(dbf: str, nonce: str) -> dict | None:
+    row = get_by_nonce(dbf, nonce)
+    if not row:
+        return None
+    out = dict(row)
+    if out["state"] == "pending" and out["expires_at"] < _now():
+        out["state"] = "expired"
+    out["argv"] = json.loads(out.pop("argv_json"))
+    out["seconds_left"] = max(0, out["expires_at"] - _now())
+    return out
+
+
+def try_consume(dbf: str, nonce: str, host_id: str, argv: list[str]):
+    """原子核销：仅当 (nonce, host, argv) 与批准记录逐字一致时成功。"""
+    row = get_by_nonce(dbf, nonce)
+    if not row:
+        return False, None, "nonce 不存在"
+    if row["state"] == "expired":
+        return False, None, "审批已过期"
+    if row["expires_at"] < _now():
+        db.execute(dbf, "UPDATE approvals SET state='expired' WHERE nonce=?", (nonce,))
+        return False, None, "审批已过期"
+    if row["state"] != "approved":
+        return False, None, f"审批状态为 {row['state']}（需先在 Web 控制台批准）"
+    stored = json.loads(row["argv_json"])
+    if stored != list(argv) or row["host"] != host_id:
+        return False, None, "argv/host 与批准内容不一致，拒绝执行"
+    cur = db.execute(
+        dbf,
+        "UPDATE approvals SET state='consumed', consumed_at=? WHERE nonce=? AND state='approved'",
+        (_now(), nonce))
+    if cur.rowcount != 1:
+        return False, None, "nonce 已被使用"
+    return True, dict(row), ""

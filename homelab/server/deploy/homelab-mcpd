@@ -1,0 +1,5 @@
+#!/bin/bash
+# ali 上的 stdio 入口：stdout 只走 MCP 协议，日志/报错全部进 stderr → 文件
+cd /opt/homelab
+exec 2>>/var/log/homelab/mcp-stdio.err
+exec /usr/bin/python3 -m homelab.mcp_stdio "$@"

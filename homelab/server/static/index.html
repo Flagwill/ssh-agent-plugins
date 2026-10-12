@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="homelab">
+<link rel="manifest" href="/home/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/home/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/home/icons/icon-192.png">
+<link rel="stylesheet" href="/home/style.css">
+<title>homelab 控制台</title>
+</head>
+<body>
+<div id="app" class="hidden">
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>homelab</div>
+    <div class="top-actions">
+      <span id="user-badge" class="badge"></span>
+      <button id="refresh-btn" class="icon-btn" aria-label="刷新">⟳</button>
+      <button id="logout-btn" class="icon-btn" aria-label="退出">⏻</button>
+    </div>
+  </header>
+
+  <main id="views">
+    <!-- 总览 -->
+    <section class="view" data-view="overview">
+      <div id="pending-banner" class="banner hidden"></div>
+      <div id="host-cards" class="cards"></div>
+      <h2>最近动态</h2>
+      <ul id="overview-audit" class="feed"></ul>
+    </section>
+
+    <!-- 主机 -->
+    <section class="view hidden" data-view="hosts">
+      <ul id="host-list" class="list"></ul>
+      <div id="host-detail" class="hidden">
+        <button id="host-back" class="back">‹ 返回</button>
+        <h2 id="hd-title"></h2>
+        <div class="chart-wrap"><svg id="hd-chart" viewBox="0 0 300 90" preserveAspectRatio="none"></svg>
+          <div class="chart-legend"><span class="k cpu">CPU</span><span class="k mem">内存</span><span class="k net">网络</span></div>
+        </div>
+        <div id="hd-stats" class="stats"></div>
+        <h3>服务</h3>
+        <ul id="hd-services" class="chips"></ul>
+        <h3>日志</h3>
+        <div class="row">
+          <input id="hd-unit" placeholder="unit, 如 nginx(可空)" />
+          <button id="hd-logs-btn" class="btn small">查看</button>
+        </div>
+        <pre id="hd-logs" class="logs"></pre>
+      </div>
+    </section>
+
+    <!-- 审批 -->
+    <section class="view hidden" data-view="approvals">
+      <h2>待审批</h2>
+      <ul id="approval-pending" class="list"></ul>
+      <h2>历史</h2>
+      <ul id="approval-history" class="list"></ul>
+    </section>
+
+    <!-- 审计 -->
+    <section class="view hidden" data-view="audit">
+      <h2>审计流水</h2>
+      <ul id="audit-list" class="list mono"></ul>
+      <h2>Agent 身份</h2>
+      <ul id="agents-list" class="list"></ul>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab active" data-tab="overview">总览</button>
+    <button class="tab" data-tab="hosts">主机</button>
+    <button class="tab" data-tab="approvals">审批<span id="approval-badge" class="badge-count hidden">0</span></button>
+    <button class="tab" data-tab="audit">审计</button>
+  </nav>
+</div>
+
+<!-- 登录 -->
+<div id="login" class="login">
+  <form id="login-form" class="login-card">
+    <div class="brand big"><span class="dot"></span>homelab</div>
+    <p class="muted">服务器统一监控 · 全局审批</p>
+    <input id="login-pw" type="password" placeholder="访问密码" autocomplete="current-password" required>
+    <button class="btn" type="submit">登录</button>
+    <p id="login-err" class="err"></p>
+    <p class="muted small">登录状态将保持 30 天</p>
+  </form>
+</div>
+
+<script src="/home/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+[Unit]
+Description=homelab web console + collector (PWA + REST)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcp
+Group=mcp
+WorkingDirectory=/opt/homelab
+Environment=HOMELAB_CONFIG=/opt/homelab/hosts.toml
+ExecStart=/usr/bin/python3 -m homelab.webapp
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/homelab /var/log/homelab /opt/homelab
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
