@@ -40,7 +40,7 @@ ali(local) · raspi(:10003) · asus(:14098) · cone(182.255.88.7)  ← root/flag
 | `run_read` | **只读白名单**命令自动执行（df/free/systemctl status/apt list…） |
 | `run_user` | **普通用户级**命令免审批执行（python3/node/npm/git/curl/tar/bash…41 项，`user_whitelist`），以登录用户身份（远端 flagw/ali 本地 mcp），**不碰 root** |
 | `sentinel_events` / `sentinel_clips` | raspi 摄像头事件库与录像列表 |
-| **`sudo_run`** | **root 执行的唯一入口**：命中 `auto_allow` 立即执行；否则 pending+nonce+`tell_user` |
+| **`sudo_run`** | **root 执行的唯一入口**：命中 `auto_allow` 或用户已开启「自动批准窗口」则立即执行；否则 pending+nonce+`tell_user` |
 | **`sudo_wait`** | 轮询审批并执行（阻塞 25s；批准即执行，返回 exit_code/stdout） |
 | `sudo_status` | 只查状态不执行 |
 | `sudo_help` | 完整 playbook（三档模型/白名单/流程/铁律） |
@@ -69,6 +69,20 @@ sudo_run("cone", ["systemctl","restart","nginx"], "重启 nginx")
 **auto_allow**（hosts.toml 按主机配置，免审批但同样走 nonce+execd+审计）：
 cone 的 `systemctl restart nginx/xray/sing-box`、raspi 的 `systemctl restart sentinel/frp_ssh`、
 ali 的 `systemctl reload caddy` 等。要加新条目改 hosts.toml 重启 homelab-web 即可。
+
+## 自动批准窗口（PWA）
+
+控制台「审批」页顶部有 **⚡ 自动批准** 卡片：选一段时长（10/30/60/120 分钟或自定义，
+上限由 `hosts.toml` 的 `auto_approve_max_minutes` 控制，默认 120）开启后，窗口内
+**所有** root 审批请求自动批准并执行；开启时会把当前所有待批请求一并批准。
+
+- 实现：窗口截止时间存 `meta.auto_approve_until`（epoch 秒），`sudo_run` 创建审批后
+  先查窗口，命中即 `decide(..., "policy:auto-approve-window")` 再走 execd 执行
+- **仍然全审计**：审计流水的 `sudo_auto_window` / `auto_approve_on|off` 可见
+- **硬拒绝清单不受影响**：`rm -rf /`、`dd of=/dev/*` 等即使窗口开启也不执行
+- 到点自动失效（无需后台任务，按 `until` 实时判定）；可随时「立即关闭」
+- agent 侧：窗口内 `sudo_run` 直接返回 `{status: executed, auto_approved: true}`，
+  无需 `sudo_wait`；`sudo_help` 会显示窗口剩余时间
 
 ## 客户端配置
 

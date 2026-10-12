@@ -12,6 +12,8 @@ known_hosts = "/etc/homelab/known_hosts"
 control_dir = "/opt/homelab/run/ssh"
 session_ttl_days = 30
 approval_ttl_minutes = 15
+# Web 控制台"自动批准窗口"单次可开启的最长分钟数(硬上限)
+auto_approve_max_minutes = 120
 collect_interval = 60
 metrics_retention_days = 7
 

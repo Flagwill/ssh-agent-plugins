@@ -218,6 +218,8 @@ async def overview(request: Request):
         "hosts": [_host_summary(h) for h in CFG.hosts],
         "pending_count": len([p for p in pending
                               if p["expires_at"] > int(time.time())]),
+        "auto_approve": approvals.auto_approve_view(
+            DBF, CFG.auto_approve_max_minutes),
         "audit_recent": audit.tail(DBF, 8),
     }
 
@@ -289,7 +291,44 @@ async def approvals_api(request: Request, state: str = "", limit: int = 50):
     if isinstance(s, JSONResponse):
         return s
     rows = approvals.list_recent(DBF, state, limit)
-    return {"approvals": [_approval_view(r) for r in rows]}
+    return {"approvals": [_approval_view(r) for r in rows],
+            "auto_approve": approvals.auto_approve_view(
+                DBF, CFG.auto_approve_max_minutes)}
+
+
+@APP.get("/api/auto-approve")
+async def auto_approve_get(request: Request):
+    s = _need_session(request)
+    if isinstance(s, JSONResponse):
+        return s
+    return approvals.auto_approve_view(DBF, CFG.auto_approve_max_minutes)
+
+
+@APP.post("/api/auto-approve")
+async def auto_approve_set(request: Request):
+    s = _need_session(request)
+    if isinstance(s, JSONResponse):
+        return s
+    if not _csrf_ok(request):
+        return JSONResponse({"error": "CSRF check failed"}, status_code=403)
+    body = await _json(request)
+    try:
+        minutes = int(body.get("minutes", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "minutes 必须为整数"}, status_code=400)
+    max_min = CFG.auto_approve_max_minutes
+    if minutes > max_min:
+        return JSONResponse({"error": f"最长 {max_min} 分钟"}, status_code=400)
+    view = approvals.set_auto_approve(DBF, minutes, "web-user", max_min)
+    approved = []
+    if minutes > 0 and body.get("approve_pending", True):
+        approved = approvals.auto_approve_pending(DBF, "policy:auto-approve-window")
+    audit.record(DBF, "web-user",
+                 "auto_approve_on" if minutes > 0 else "auto_approve_off", "", [],
+                 f"minutes={minutes} until={view['until']} "
+                 f"pending_approved={len(approved)}", _client_ip(request))
+    return {"ok": True, "auto_approve": view,
+            "approved_count": len(approved)}
 
 
 @APP.post("/api/approvals/{rid}/approve")

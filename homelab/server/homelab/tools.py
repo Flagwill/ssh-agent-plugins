@@ -329,6 +329,24 @@ def tool_sudo_run(ctx: Ctx, host: str = "", argv: list | None = None,
 
     ap = approvals.create(ctx.dbf, ctx.actor, host, list(argv), reason or "(未填)",
                           summary, ttl, ip=ctx.ip)
+
+    # 自动批准窗口: 用户已在 Web 控制台开启一段时间内的全量自动批准
+    if approvals.auto_approve_active(ctx.dbf):
+        approvals.decide(ctx.dbf, ap["id"], "policy:auto-approve-window", True)
+        audit.record(ctx.dbf, ctx.actor, "sudo_auto_window", host, list(argv),
+                     f"auto-approve window until "
+                     f"{approvals.auto_approve_until(ctx.dbf)}", ctx.ip)
+        result = dict(_exec_approved(ctx, ap["nonce"], host, list(argv)))
+        if result.get("rejected"):
+            result["status"] = "rejected"
+        elif result.get("ok") is False:
+            result["status"] = "failed"
+        else:
+            result["status"] = "executed"
+        result["auto_approved"] = True
+        result["matched_rule"] = "auto-approve-window"
+        return result
+
     audit.record(ctx.dbf, ctx.actor, "sudo_request", host, list(argv),
                  f"reason={reason} nonce={ap['nonce'][:6]}…", ctx.ip)
     return {
@@ -361,6 +379,14 @@ def tool_sudo_wait(ctx: Ctx, nonce: str = "", wait_seconds: int = 25, **_):
         if not v:
             return {"error": "nonce 不存在"}
         st = v["state"]
+        # 自动批准窗口: 若用户已开启, 任何轮询到的 pending 请求当场批准
+        if st == "pending" and approvals.auto_approve_active(ctx.dbf):
+            approvals.decide(ctx.dbf, v["id"], "policy:auto-approve-window", True)
+            audit.record(ctx.dbf, ctx.actor, "sudo_auto_window", v["host"], v["argv"],
+                         f"auto-approve window until "
+                         f"{approvals.auto_approve_until(ctx.dbf)}", ctx.ip)
+            v = approvals.status_view(ctx.dbf, nonce) or v
+            st = v["state"]
         if st == "approved":
             resp = _exec_approved(ctx, nonce, v["host"], v["argv"])
             if resp.get("rejected"):
@@ -420,6 +446,10 @@ SUDO_PLAYBOOK = """
 2. sudo_wait(nonce) 轮询, 用户在 https://flagw.apay.eu.cc/home 批准后自动执行。
    被拒/过期如实返回, 不要重复申请同一命令。
 
+注意: 用户可在控制台开启"自动批准窗口"(一段时间内全量自动批准)。开启期间
+sudo_run 会直接返回 {status: executed, auto_approved: true}, 无需 sudo_wait;
+这是用户主动授权的, 不要把它当成异常。硬拒绝清单仍然生效。
+
 ## 铁律
 - 不要自己拼 ssh/sudo 命令绕过审批, 也不要去服务器上读 homelab 源码——
   本指南即全部协议, 没有隐藏步骤。
@@ -431,7 +461,10 @@ SUDO_PLAYBOOK = """
 
 def tool_sudo_help(ctx: Ctx, **_):
     """完整使用指南: 何时要审批/审批流怎么走/示例/铁律。对流程不确定时先调用本工具。"""
+    aa = approvals.auto_approve_view(ctx.dbf)
     return {"playbook": SUDO_PLAYBOOK,
+            "auto_approve_window": (f"开启中, 剩余 {aa['seconds_left']}s"
+                                    if aa["active"] else "关闭"),
             "run_read_whitelist": sorted(set(ctx.cfg.readonly_whitelist)),
             "run_user_whitelist": sorted(set(ctx.cfg.data["exec"].get("user_whitelist", []))),
             "auto_allow_now": sorted(set(ctx.cfg.data["exec"].get("auto_allow", []))),
@@ -535,6 +568,7 @@ TOOLS = [
      "annotations": {"readOnlyHint": True, "openWorldHint": True}},
     {"name": "sudo_run",
      "description": "以 root 执行命令的唯一入口(自动审批)。命中 auto_allow 立即执行; "
+                    "若用户开启了自动批准窗口也立即执行(auto_approved=true); "
                     "否则创建 15 分钟一次性审批请求并返回 pending+nonce, "
                     "此时把 tell_user 转告用户, 然后调用 sudo_wait(nonce) 轮询, "
                     "批准后自动执行并返回结果。例: "
@@ -550,6 +584,7 @@ TOOLS = [
     {"name": "sudo_wait",
      "description": "轮询审批并执行: 阻塞最多 wait_seconds 秒(默认25)。用户批准后立即以 root "
                     "执行并返回结果; 被拒/过期返回终态; 未决返回 pending(继续调用即可)。"
+                    "若用户已开启自动批准窗口, pending 请求会当场自动批准执行。"
                     "nonce 来自 sudo_run。",
      "inputSchema": _schema(
          {"nonce": {"type": "string"}, "wait_seconds": {"type": "integer"}},

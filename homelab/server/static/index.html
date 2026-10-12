@@ -28,6 +28,7 @@
   <main id="views">
     <!-- 总览 -->
     <section class="view" data-view="overview">
+      <div id="auto-banner" class="banner auto hidden"></div>
       <div id="pending-banner" class="banner hidden"></div>
       <div id="host-cards" class="cards"></div>
       <h2>最近动态</h2>
@@ -57,6 +58,24 @@
 
     <!-- 审批 -->
     <section class="view hidden" data-view="approvals">
+      <div id="auto-card" class="auto-card">
+        <div class="auto-head">
+          <span class="title">⚡ 自动批准</span>
+          <span id="aa-status" class="badge">已关闭</span>
+        </div>
+        <p class="muted small">开启后，在所选时间内所有 root 审批请求将<b>自动批准并执行</b>；
+          仍受永久拒绝清单约束、全程审计。到点自动关闭。</p>
+        <div id="aa-controls">
+          <div id="aa-presets" class="chips"></div>
+          <div class="row">
+            <input id="aa-custom" type="number" inputmode="numeric" min="1"
+                   placeholder="自定义分钟" />
+            <button id="aa-start" class="btn small">开启</button>
+          </div>
+        </div>
+        <button id="aa-stop" class="btn danger hidden">立即关闭自动批准</button>
+        <p id="aa-err" class="err"></p>
+      </div>
       <h2>待审批</h2>
       <ul id="approval-pending" class="list"></ul>
       <h2>历史</h2>

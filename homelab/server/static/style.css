@@ -67,6 +67,8 @@ h3 { font-size: 13px; color: var(--muted); margin: 16px 0 8px; }
 .banner { background: linear-gradient(135deg, #1c2b22, #14202c); border: 1px solid #2e5c46;
   color: var(--accent); border-radius: 12px; padding: 11px 13px; margin-bottom: 12px;
   font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.banner.auto { background: linear-gradient(135deg, #2b2418, #1f1a12);
+  border-color: #5c4a2e; color: var(--warn); margin-bottom: 8px; }
 .approval-actions { display: flex; gap: 8px; margin-top: 10px; }
 .btn { flex: 1; border: none; border-radius: 10px; padding: 11px; font-size: 15px;
   font-weight: 650; background: var(--accent); color: #06281a; cursor: pointer;
@@ -136,3 +138,15 @@ input:focus { outline: none; border-color: #33506b; }
 .tab.active { color: var(--accent); }
 .badge-count { background: var(--err); color: #fff; border-radius: 99px;
   font-size: 10px; line-height: 1; padding: 3px 6px; font-weight: 700; }
+
+/* 自动批准卡片 */
+.auto-card { background: var(--card); border: 1px solid var(--line);
+  border-radius: 14px; padding: 12px 13px; margin-bottom: 12px; }
+.auto-head { display: flex; justify-content: space-between; align-items: center; }
+.auto-head .title { font-weight: 650; }
+#aa-status.aa-on { color: var(--warn); border-color: #5c4a2e;
+  background: #241d12; font-variant-numeric: tabular-nums; }
+.auto-card p { margin: 8px 0; }
+#aa-controls .row { margin-top: 10px; }
+#aa-presets { margin-top: 4px; }
+#aa-presets .btn { min-height: 40px; padding: 8px 12px; }

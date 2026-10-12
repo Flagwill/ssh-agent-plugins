@@ -51,6 +51,11 @@ class Config:
         return int(self.data["general"].get("approval_ttl_minutes", 15))
 
     @property
+    def auto_approve_max_minutes(self) -> int:
+        """Web 控制台"自动批准窗口"单次可开启的最长分钟数。"""
+        return int(self.data["general"].get("auto_approve_max_minutes", 120))
+
+    @property
     def collect_interval(self) -> int:
         return int(self.data["general"].get("collect_interval", 60))
 

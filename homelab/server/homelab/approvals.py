@@ -77,6 +77,68 @@ def decide(dbf: str, rid: str, by: str, approve: bool) -> dict | None:
     return row
 
 
+# ---------------------------------------------------------------- 自动批准窗口
+# 用户可在 Web 控制台开启一段时间的"全量自动批准": 窗口内所有 root 审批请求
+# 自动批准并执行(仍走 nonce+execd+硬拒绝+全审计, decided_by=policy:auto-approve-window)。
+
+AUTO_UNTIL_KEY = "auto_approve_until"
+AUTO_BY_KEY = "auto_approve_set_by"
+AUTO_AT_KEY = "auto_approve_set_at"
+
+
+def auto_approve_until(dbf: str) -> int:
+    raw = db.meta_get(dbf, AUTO_UNTIL_KEY)
+    try:
+        return int(raw) if raw else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def auto_approve_active(dbf: str) -> bool:
+    return auto_approve_until(dbf) > _now()
+
+
+def auto_approve_view(dbf: str, max_minutes: int = 120) -> dict:
+    until = auto_approve_until(dbf)
+    left = max(0, until - _now())
+    active = left > 0
+    return {
+        "active": active,
+        "until": until if active else 0,
+        "seconds_left": left,
+        "max_minutes": int(max_minutes),
+        "set_by": (db.meta_get(dbf, AUTO_BY_KEY) or "") if active else "",
+        "set_at": (int(db.meta_get(dbf, AUTO_AT_KEY) or 0)) if active else 0,
+    }
+
+
+def set_auto_approve(dbf: str, minutes: int, by: str,
+                     max_minutes: int = 120) -> dict:
+    """开启(minutes>0)或关闭(minutes<=0)自动批准窗口。minutes 上限受配置约束。"""
+    if minutes <= 0:
+        db.meta_set(dbf, AUTO_UNTIL_KEY, "0")
+        return auto_approve_view(dbf, max_minutes)
+    minutes = max(1, min(int(minutes), max(1, int(max_minutes))))
+    now = _now()
+    db.meta_set(dbf, AUTO_UNTIL_KEY, str(now + minutes * 60))
+    db.meta_set(dbf, AUTO_BY_KEY, by)
+    db.meta_set(dbf, AUTO_AT_KEY, str(now))
+    return auto_approve_view(dbf, max_minutes)
+
+
+def auto_approve_pending(dbf: str, by: str) -> list[dict]:
+    """把当前所有未过期的 pending 请求立即批准(返回已批准的行)。"""
+    rows = db.query_all(
+        dbf, "SELECT id FROM approvals WHERE state='pending' AND expires_at>?",
+        (_now(),))
+    out = []
+    for r in rows:
+        row = decide(dbf, r["id"], by, True)
+        if row and row.get("state") == "approved":
+            out.append(row)
+    return out
+
+
 def status_view(dbf: str, nonce: str) -> dict | None:
     row = get_by_nonce(dbf, nonce)
     if not row:

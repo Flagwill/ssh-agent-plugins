@@ -73,7 +73,8 @@ class Server:
                     "统一管理 raspi/asus/ali/cone 四台服务器。三档: "
                     "【只读】run_read 白名单命令免审批; 【普通命令】run_user 以登录用户身份"
                     "(非root)免审批执行 python3/node/git/curl/bash 等; 【root】sudo_run, "
-                    "命中 auto_allow 立即执行否则 pending——把 tell_user 转告用户去 "
+                    "命中 auto_allow 或用户已开启自动批准窗口则立即执行, 否则 pending——把 "
+                    "tell_user 转告用户去 "
                     "https://flagw.apay.eu.cc/home 批准, 然后 sudo_wait(nonce) 轮询自动执行。"
                     "不需要 root 别用 sudo_run。禁止自行拼 ssh/sudo 命令或去服务器读源码; "
                     "流程疑问先调 sudo_help。",

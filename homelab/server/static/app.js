@@ -99,6 +99,7 @@
       pb.textContent = `⏳ ${d.pending_count} 个待审批请求 — 前往「审批」处理`;
       pb.onclick = () => switchTab("approvals");
     } else pb.classList.add("hidden");
+    if (d.auto_approve) applyAuto(d.auto_approve);
     $("#overview-audit").innerHTML = d.audit_recent.map((a) =>
       `<li><time>${fmtTime(a.ts)}</time><span class="what"><b>${esc(a.actor)}</b> ${esc(a.kind)} ${esc(a.host)}</span></li>`).join("");
     updateBadge(d.pending_count);
@@ -108,6 +109,80 @@
     const b = $("#approval-badge");
     b.textContent = n; b.classList.toggle("hidden", n <= 0);
   }
+
+  /* ---------------- 自动批准窗口 ---------------- */
+  let autoUntil = 0;   // epoch 秒, 0 = 关闭
+  let autoTimer = null;
+  let autoPresetsBuilt = false;
+
+  function autoCountdown() {
+    const left = Math.max(0, Math.floor(autoUntil - Date.now() / 1000));
+    const h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60),
+          s = left % 60;
+    return (h ? h + "时" : "") + m + "分" + String(s).padStart(2, "0") + "秒";
+  }
+
+  function renderAuto() {
+    const on = autoUntil > Date.now() / 1000;
+    const st = $("#aa-status");
+    st.textContent = on ? `开启中 · ${autoCountdown()}` : "已关闭";
+    st.classList.toggle("aa-on", on);
+    $("#aa-controls").classList.toggle("hidden", on);
+    $("#aa-stop").classList.toggle("hidden", !on);
+    const ab = $("#auto-banner");
+    if (on) {
+      ab.classList.remove("hidden");
+      ab.textContent = `⚡ 自动批准开启中 · 剩余 ${autoCountdown()}（点此管理）`;
+      ab.onclick = () => switchTab("approvals");
+    } else ab.classList.add("hidden");
+  }
+
+  function applyAuto(d) {
+    autoUntil = d && d.active ? d.until : 0;
+    if (d && d.max_minutes) {
+      $("#aa-custom").max = d.max_minutes;
+      if (!autoPresetsBuilt) { buildAutoPresets(d.max_minutes); autoPresetsBuilt = true; }
+    }
+    renderAuto();
+    clearInterval(autoTimer);
+    if (autoUntil) autoTimer = setInterval(renderAuto, 1000);
+  }
+
+  async function setAuto(minutes) {
+    const err = $("#aa-err");
+    err.className = "err"; err.textContent = "";
+    const r = await fetch("/home/api/auto-approve", {
+      method: "POST", headers: H,
+      body: JSON.stringify({ minutes, approve_pending: minutes > 0 }),
+    });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || "操作失败"; return; }
+    applyAuto(d.auto_approve);
+    if (minutes > 0 && d.approved_count) {
+      err.className = "small muted";
+      err.textContent = `已自动批准 ${d.approved_count} 个待批请求`;
+    }
+    loadApprovals(); loadOverview();
+  }
+
+  const AA_PRESETS = [10, 30, 60, 120];
+
+  function buildAutoPresets(maxMin) {
+    const opts = AA_PRESETS.filter((m) => !maxMin || m <= maxMin);
+    if (maxMin && !opts.includes(maxMin)) opts.push(maxMin);
+    $("#aa-presets").innerHTML = opts.map((m) =>
+      `<li><button class="btn small ghost" data-min="${m}">${m >= 60 ? (m / 60) + " 小时" : m + " 分钟"}</button></li>`).join("");
+    $$("#aa-presets [data-min]").forEach((b) =>
+      b.addEventListener("click", () => setAuto(Number(b.dataset.min))));
+  }
+
+  $("#aa-start").addEventListener("click", () => {
+    const v = parseInt($("#aa-custom").value, 10);
+    if (!v || v <= 0) { $("#aa-err").textContent = "请输入有效分钟数"; return; }
+    setAuto(v);
+  });
+
+  $("#aa-stop").addEventListener("click", () => setAuto(0));
 
   /* ---------------- 主机 ---------------- */
   async function loadHosts() {
@@ -189,6 +264,7 @@
 
   async function loadApprovals() {
     const d = await api("/home/api/approvals?state=pending");
+    if (d.auto_approve) applyAuto(d.auto_approve);
     $("#approval-pending").innerHTML = d.approvals.length
       ? d.approvals.map((a) => approvalItem(a, true)).join("")
       : `<li class="muted">暂无待审批请求</li>`;
