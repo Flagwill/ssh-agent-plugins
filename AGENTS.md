@@ -18,7 +18,7 @@
 |---|---|---|---|
 | ali | `admin@flagw.apay.eu.cc:22`（密码登录，保留） | Ubuntu 24.04 阿里云 ECS，8.130.131.119 | **中枢**：homelab 全套 + frps + Caddy + ss-server |
 | raspi | `flagw@flagw.apay.eu.cc:10003`（ali frps 隧道） | Ubuntu 24.04 aarch64 树莓派 | Sentinel D435i 摄像头监控（`/opt/sentinel`，127.0.0.1:8787） |
-| asus | `flagw@flagw.apay.eu.cc:14098`（asus `ssh -R` 反代） | Ubuntu 24.04 华硕笔记本 | Clash Verge + openclaw gateway(:18789) |
+| asus | `flagw@flagw.apay.eu.cc:14098`（asus `ssh -R` 反代） | Ubuntu 24.04 华硕笔记本 | Clash Verge + openclaw gateway(:18789，已接 homelab MCP，agent=`openclaw`) |
 | cone | `flagw@flagw.cloud-ip.cc:22`（公网 182.255.88.7） | Ubuntu 24.04 | xray(reality TCP 443/9443) + sing-box(hy2 UDP 443/9443) + nginx(订阅分发) |
 
 - 用户要求：**四台机器保留密码登录**（人工登录用），安全加固以后再议。只加密钥，不改认证方式。
@@ -34,6 +34,34 @@ Caddy(已有): handle /home* → 127.0.0.1:8790（不剥前缀，webapp 中间�
 公网入口: https://flagw.apay.eu.cc/home （PWA，可加 iOS 主屏幕）
 ```
 
+harness 接入面（都在 ali 的 `/opt/homelab/.ssh/authorized_keys`，agent 身份自动注册）：
+
+| 客户端 | 位置 | 密钥 | HOMELAB_AGENT |
+|---|---|---|---|
+| pi / codex / opencode | 本机 | `~/.ssh/homelab_agent` | pi / codex / opencode |
+| openclaw gateway | asus(flagw) | `~/.ssh/homelab_openclaw`(ed25519) | openclaw |
+
+### 3.1 openclaw 接入（asus，2026-10-12 首次部署）
+
+- OpenClaw `2026.10.1 (e178c39)`，npm 全局装在 asus `~/.npm-global/lib/node_modules/openclaw`，
+  gateway 以 flagw 常驻 `127.0.0.1:18789`；配置 `/home/flagw/.openclaw/openclaw.json`。
+- MCP 入口即 `mcp.servers`（与 codex/claude 同形的 stdio 配置），管理命令
+  `openclaw mcp add/list/show/probe/reload/doctor`；`mcp add` 保存前会 probe，
+  `mcp reload` 让 gateway 下一轮构建新 runtime（不用重启 gateway）。
+- asus→ali 走公网直连 `mcp@flagw.apay.eu.cc:22`（asus 出口 183.192.11.16，不走隧道）。
+- 部署命令（asus 上以 flagw 执行，幂等由公钥去重保证）：
+  `openclaw mcp add homelab --command ssh --arg -i --arg /home/flagw/.ssh/homelab_openclaw
+   --arg -o --arg IdentitiesOnly=yes --arg -o --arg BatchMode=yes
+   --arg -o --arg StrictHostKeyChecking=accept-new --arg -o --arg ConnectTimeout=10
+   --arg -o --arg ServerAliveInterval=30 --arg -o --arg ServerAliveCountMax=3
+   --arg mcp@flagw.apay.eu.cc --arg "exec /usr/local/bin/homelab-mcpd --agent openclaw"
+   --env HOMELAB_AGENT=openclaw --timeout 60 --connect-timeout 20`
+- 密钥注册方式：公钥 append 到 ali `/opt/homelab/.ssh/authorized_keys`——**必须走运维直达
+  （本机 `ssh -i ~/.ssh/homelab_agent mcp@ali`，mcp 用户写自己的文件，无需 root）**；
+  MCP 通道两侧（tools.py/execd.py）对 `authorized_keys` 是硬拒绝，别绕。
+- 验收：`openclaw mcp probe homelab` → 16 tools；ali 侧 `agents` 表出现 `openclaw`，
+  audit 有 `session_start ... from 183.192.11.16`。
+
 | 路径 | 说明 |
 |---|---|
 | `/opt/homelab/` | 代码（homelab 包 + static/ + hosts.toml + deploy/），mcp:mcp |
@@ -48,7 +76,8 @@ Caddy(已有): handle /home* → 127.0.0.1:8790（不剥前缀，webapp 中间�
 | `~/.local/bin/homelab-mcp`（本机） | stdio 启动器（`ssh … homelab-mcpd --agent X`） |
 
 harness 配置位置：pi `~/.pi/agent/mcp.json`；codex `~/.codex/config.toml`（`[mcp_servers.homelab]`）；
-opencode `~/.config/opencode/opencode.json`（`mcp.homelab`）。三处 env 都是 `HOMELAB_AGENT=<名字>`。
+opencode `~/.config/opencode/opencode.json`（`mcp.homelab`）；openclaw 在 asus 的
+`/home/flagw/.openclaw/openclaw.json`（`mcp.servers.homelab`，见 §3.1）。前三处 env 都是 `HOMELAB_AGENT=<名字>`。
 
 **Web 控制台密码**：scrypt 哈希存 DB（`meta.web_password_hash`），不明文。轮换：
 `cd /opt/homelab && sudo -u mcp python3 -m homelab.initdb --password X`。
@@ -106,6 +135,15 @@ systemctl restart homelab-web homelab-execd
 8. **execd `Connection refused`** → 先 `journalctl -u homelab-execd`，九成是单元/模块问题。
 9. **部署后 helathcheck 流程**：`systemctl is-active` 两个服务 → metrics 表四主机 →
    MCP stdio 手工 JSON-RPC → web curl 登录/overview → 审批流 E2E。
+10. **`run_read`/`run_user` 会把以 `-i` 开头的参数当交互参数拒绝**（防 `ssh -i`/交互式 flag）。
+    踩坑：`grep -i pattern file` 因此整条被拒，一度误判成 openclaw.json 有非 UTF-8 字节
+    （实测纯 ASCII）。绕法：`bash -lc "..."` 把整条命令塞进单个参数，或不用 `-i`。
+11. **`ls`/`cat` 只在只读白名单，不在 user_whitelist**：列目录/读文件用 `run_read`；
+    `run_user` 只认 python3/node/grep/jq/bash 等 41 项。另外 codemode 桥对 error 返回
+    会抛 `Invalid MCP tools/call structured content`——看到它先查白名单/拒绝规则，不是网络问题。
+12. **mcp 用户的家目录是 `/opt/homelab`（不是 `/home/mcp`）**：其 `authorized_keys` 在
+    `/opt/homelab/.ssh/authorized_keys`（mcp 自写即可，见 §3.1）。
+13. **openclaw CLI 每次调用启动约 20s**：`mcp add/probe/reload` 都慢，给它留足 timeout。
 
 ## 7. 测试 SOP
 
@@ -119,7 +157,7 @@ systemctl restart homelab-web homelab-execd
 
 ## 8. 设计决策记录（为什么这么做）
 
-- **stdio-over-SSH 而非 HTTP 端口**：不新增公网口，复用 SSH 密钥体系，三端配置同形。
+- **stdio-over-SSH 而非 HTTP 端口**：不新增公网口，复用 SSH 密钥体系，多端配置同形。
 - **审批放在 PWA 而非 harness 弹窗**：用户选了手机网页渠道；策略集中在服务端，
   不依赖任何 harness 的 permission 实现。
 - **execd root + argv-only + 无 shell**：远端命令 `shlex.quote` 逐一转义；本地直 execv 列表。
@@ -133,3 +171,4 @@ systemctl restart homelab-web homelab-execd
 - [ ] per-host execd 拆分 root 密钥
 - [ ] 密码登录收紧（用户要求暂缓）：至少 ali 上 fail2ban、密钥优先
 - [ ] 常用命令 promote 进 auto_allow 的半自动建议（按审计统计）
+- [ ] openclaw 侧跑一次真实 agent turn 验证工具调用闭环（probe/reload 已过，turn 未测）

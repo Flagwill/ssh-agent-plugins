@@ -5,10 +5,12 @@
 本仓库存放本机当前整理出的 SSH 插件实现，按客户端分目录：
 
 - `homelab/`：**主线项目**。部署于 ali 的「四机（raspi/asus/ali/cone）统一 MCP 服务
-  + PWA 审批监控台」，pi/codex/opencode 共用；详见 `homelab/README.md` 与根目录 `AGENTS.md`。
+  + PWA 审批监控台」，pi/codex/opencode（本机）与 openclaw（asus）共用；详见 `homelab/README.md` 与根目录 `AGENTS.md`。
 - `codex/`：Codex MCP 插件，版本 `0.3.0`，兼容 Windows OpenSSH。
 - `opencode/`：OpenCode 原生插件实现，配套本机 OpenCode `v2.0.9`。
-- `openclaw/`：本机盘点时未发现 OpenClaw 可执行文件、配置目录或 SSH 插件源码，因此当前仅保留目录说明，不包含伪造实现。
+- `openclaw/`：OpenClaw 接入记录。OpenClaw 本体只装在 asus（`2026.10.1`，gateway :18789），
+  已通过 `openclaw mcp add` 接入 homelab MCP；本机仍未安装 OpenClaw，故暂无可执行插件源码，
+  只保留部署配方与踩坑记录（见 `openclaw/README.md`）。
 
 Codex 插件版本为 `0.3.0`，OpenCode 插件也支持每次调用单独传入 SSH 密码。密码字段在 Codex MCP schema 中标记为 writeOnly，但客户端是否隐藏或从日志中排除该输入取决于客户端实现。
 
@@ -29,7 +31,7 @@ Codex 插件版本为 `0.3.0`，OpenCode 插件也支持每次调用单独传入
 - Codex CLI：`0.149.0`
 - OpenCode：`v2.0.9`
 - Codex SSH 插件 manifest：`0.3.0`
-- OpenClaw：本机未安装/未发现，因此无可归档版本
+- OpenClaw：asus 上 `2026.10.1 (e178c39)`，已接入 homelab MCP（agent=`openclaw`）；本机未安装
 
 ## 目录说明
 

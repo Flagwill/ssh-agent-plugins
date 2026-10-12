@@ -1,6 +1,6 @@
 # homelab — 四机统一 MCP 服务 + PWA 审批监控台
 
-给所有 agent harness（pi / codex / opencode）提供一套安全、可审计的服务器管理能力：
+给所有 agent harness（pi / codex / opencode / openclaw）提供一套安全、可审计的服务器管理能力：
 监控、日志、只读命令免审批；白名单外的 root 操作走 **一次性 nonce 人工审批**。
 
 ## 架构
@@ -8,6 +8,8 @@
 ```
 本地 harness (pi/codex/opencode)
    └─ stdio MCP ──SSH(key: ~/.ssh/homelab_agent)──► mcp@ali
+asus openclaw gateway (127.0.0.1:18789)
+   └─ stdio MCP ──SSH(key: ~/.ssh/homelab_openclaw)──► mcp@ali
                                                     │
                               ┌─────────────────────┼──────────────────────┐
                               │  homelab-web (mcp)  │  homelab-execd (root)│
@@ -68,14 +70,34 @@ sudo_run("cone", ["systemctl","restart","nginx"], "重启 nginx")
 cone 的 `systemctl restart nginx/xray/sing-box`、raspi 的 `systemctl restart sentinel/frp_ssh`、
 ali 的 `systemctl reload caddy` 等。要加新条目改 hosts.toml 重启 homelab-web 即可。
 
-## 本地 harness 配置
+## 客户端配置
 
-启动器 `~/.local/bin/homelab-mcp`（ssh → `mcp@ali`，身份由 `HOMELAB_AGENT` 区分）。
-三个客户端配置已就绪：
+本机启动器 `~/.local/bin/homelab-mcp`（ssh → `mcp@ali`，身份由 `HOMELAB_AGENT` 区分）。
+三个本机客户端配置已就绪：
 
 - **pi**：`~/.pi/agent/mcp.json` → `mcpServers.homelab`
 - **codex**：`~/.codex/config.toml` → `[mcp_servers.homelab]`
 - **opencode**：`~/.config/opencode/opencode.json` → `mcp.homelab`
+
+**asus 上的 openclaw**（2026-10-12 接入，agent=`openclaw`）用 OpenClaw 原生 MCP 管理命令，
+无需启动器，公钥 `/home/flagw/.ssh/homelab_openclaw` → ali `/opt/homelab/.ssh/authorized_keys`：
+
+```bash
+# asus 上以 flagw 执行
+openclaw mcp add homelab --command ssh \
+  --arg -i --arg /home/flagw/.ssh/homelab_openclaw \
+  --arg -o --arg IdentitiesOnly=yes --arg -o --arg BatchMode=yes \
+  --arg -o --arg StrictHostKeyChecking=accept-new --arg -o --arg ConnectTimeout=10 \
+  --arg -o --arg ServerAliveInterval=30 --arg -o --arg ServerAliveCountMax=3 \
+  --arg mcp@flagw.apay.eu.cc \
+  --arg "exec /usr/local/bin/homelab-mcpd --agent openclaw" \
+  --env HOMELAB_AGENT=openclaw --timeout 60 --connect-timeout 20
+openclaw mcp probe homelab   # 验收: 16 tools
+openclaw mcp reload          # gateway 下一轮生效, 不用重启
+```
+
+验收后 ali 侧 `agents` 表出现 `openclaw`，审计可见来自 asus 出口 IP 的会话。
+密钥注册必须走运维直达 ssh（MCP 通道对 `authorized_keys` 硬拒绝）。
 
 ## iOS 添加到主屏幕
 
