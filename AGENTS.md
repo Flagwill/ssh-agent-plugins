@@ -149,6 +149,11 @@ systemctl restart homelab-web homelab-execd
 12. **mcp 用户的家目录是 `/opt/homelab`（不是 `/home/mcp`）**：其 `authorized_keys` 在
     `/opt/homelab/.ssh/authorized_keys`（mcp 自写即可，见 §3.1）。
 13. **openclaw CLI 每次调用启动约 20s**：`mcp add/probe/reload` 都慢，给它留足 timeout。
+14. **PWA 部署后看不到新 UI**：旧 `sw.js` 是 cache-first，会一直吐部署前的 HTML/JS。
+    已改成 network-first（外壳）+ `Cache-Control: no-cache` + controllerchange 自动 reload；
+    但**已装的旧 SW 仍需手动清一次**（Safari 删站点数据 / Chrome DevTools→Service Workers→
+    Unregister + Clear site data）。改前端后若用户说"没变化"，先怀疑 SW 缓存再查服务端
+    （服务端用 `curl -s https://flagw.apay.eu.cc/home | grep 关键字` 一验即知）。
 
 ## 7. 测试 SOP
 
