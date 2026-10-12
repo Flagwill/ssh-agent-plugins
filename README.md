@@ -1,7 +1,11 @@
 # SSH agent plugins
 
+> **维护者/agent 必读**：[`AGENTS.md`](AGENTS.md) —— 仓库操作记忆（架构/部署 SOP/踩坑记录/设计决策）。
+
 本仓库存放本机当前整理出的 SSH 插件实现，按客户端分目录：
 
+- `homelab/`：**主线项目**。部署于 ali 的「四机（raspi/asus/ali/cone）统一 MCP 服务
+  + PWA 审批监控台」，pi/codex/opencode 共用；详见 `homelab/README.md` 与根目录 `AGENTS.md`。
 - `codex/`：Codex MCP 插件，版本 `0.3.0`，兼容 Windows OpenSSH。
 - `opencode/`：OpenCode 原生插件实现，配套本机 OpenCode `v2.0.9`。
 - `openclaw/`：本机盘点时未发现 OpenClaw 可执行文件、配置目录或 SSH 插件源码，因此当前仅保留目录说明，不包含伪造实现。
