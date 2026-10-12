@@ -40,12 +40,15 @@ def rounded_rect_alpha(x, y, w, h, r):
     return 1.0
 
 
-def make_pixel(safe_scale=1.0, crop_circle=False):
+def make_pixel(safe_scale=1.0, opaque=True):
     def pixel(px, py, w, h):
-        # 背景
-        a_bg = rounded_rect_alpha(px, py, w, h, w * 0.225)
+        # 全幅不透明底: iOS/Android 主屏幕不再出现四角留白
         bg = lerp(BG_TOP, BG_BOTTOM, py / h)
-        # 内容区（maskable 缩放到 80% 安全区）
+        if opaque:
+            a_bg = 1.0
+        else:
+            a_bg = rounded_rect_alpha(px, py, w, h, w * 0.225)
+        # 内容区（maskable 缩放到安全区）
         s = safe_scale
         cx, cy = w / 2, h / 2
         X = (px - cx) / s + cx
@@ -60,11 +63,8 @@ def make_pixel(safe_scale=1.0, crop_circle=False):
         if chev > 0:
             k = min(1.0, chev)
             r, g, b = lerp((r, g, b), ACCENT, k)
-            a = a_bg
         if cur:
             r, g, b = ACCENT
-        if crop_circle:
-            a = a_bg if ((px - cx) ** 2 + (py - cy) ** 2) <= (w / 2) ** 2 else 0.0
         return (r, g, b, int(a * 255))
     return pixel
 
@@ -97,12 +97,13 @@ def write_png(path, w, h, pixel_fn, ss=2):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    # 普通/苹果图标: 全幅不透明正方形
     write_png(os.path.join(OUT, "icon-192.png"), 192, 192, make_pixel())
     write_png(os.path.join(OUT, "icon-512.png"), 512, 512, make_pixel())
-    # maskable: 内容缩到 80% 安全区
+    # maskable: 内容缩到 62% 安全区, 仍是全幅不透明底
     write_png(os.path.join(OUT, "icon-maskable-512.png"), 512, 512,
-              make_pixel(safe_scale=0.8))
-    # apple-touch-icon: 不透明底
+              make_pixel(safe_scale=0.62))
+    # apple-touch-icon: 不透明底(iOS 会自行圆角遮罩)
     write_png(os.path.join(OUT, "apple-touch-icon.png"), 180, 180, make_pixel())
 
 

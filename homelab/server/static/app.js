@@ -227,7 +227,12 @@
   /* ---------------- 启动 ---------------- */
   async function boot() {
     try {
-      await api("/home/api/me");
+      const me = await api("/home/api/me");
+      showApp();
+      const d = me.expires_at ? new Date(me.expires_at * 1000) : null;
+      $("#user-badge").textContent = d
+        ? `flagw · 有效期至 ${d.getMonth() + 1}/${d.getDate()}`
+        : "flagw";
       switchTab("overview");
       clearInterval(timer);
       timer = setInterval(() => {

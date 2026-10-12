@@ -1,5 +1,5 @@
 /* homelab PWA service worker: 静态资源 cache-first, API network-only */
-const CACHE = "homelab-v1";
+const CACHE = "homelab-v2";
 const SHELL = [
   "/home/", "/home/style.css", "/home/app.js", "/home/manifest.webmanifest",
   "/home/icons/icon-192.png", "/home/icons/icon-512.png",
