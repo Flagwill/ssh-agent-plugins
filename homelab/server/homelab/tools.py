@@ -119,7 +119,10 @@ def tool_hosts(ctx: Ctx, **_):
         online = bool(m and (time.time() - m["ts"]) < interval * 3 + 30)
         out.append({"id": hid, "label": h["label"], "online": online,
                     "last_seen": m["ts"] if m else None})
-    return out
+    # 注意: 必须返回 object。MCP 规范要求 structuredContent 是 JSON object,
+    # 返回 list 会让客户端(pi/codex 的 MCP SDK)抛
+    # "Invalid MCP tools/call structured content", 整个工具直接不可用。
+    return {"hosts": out}
 
 
 def tool_host_status(ctx: Ctx, host: str = "", **_):
@@ -634,6 +637,20 @@ _DISPATCH = {
 }
 
 
+def _normalize(result) -> dict:
+    """MCP 规范要求 tools/call 的 structuredContent 必须是 JSON *object*。
+
+    任何返回 list/str/number 的工具都会让客户端(pi/codex/opencode 的 MCP SDK)
+    抛 "Invalid MCP tools/call structured content", 表现为工具直接不可用且报错
+    信息与真实原因无关。这里统一兜底包一层, 防止同类问题复发。
+    """
+    if isinstance(result, dict):
+        return result
+    if result is None:
+        return {"ok": True}
+    return {"result": result}
+
+
 def call_tool(cfg, actor: str, name: str, arguments: dict, ip: str = "") -> dict:
     fn = _DISPATCH.get(name)
     if fn is None:
@@ -641,8 +658,8 @@ def call_tool(cfg, actor: str, name: str, arguments: dict, ip: str = "") -> dict
     ctx = Ctx(cfg, actor, ip)
     t0 = time.time()
     try:
-        result = fn(ctx, **(arguments or {}))
-        err = isinstance(result, dict) and result.get("error")
+        result = _normalize(fn(ctx, **(arguments or {})))
+        err = bool(result.get("error"))
         audit.record(cfg.db_path, actor, f"tool:{name}",
                      str(arguments.get("host", "")) if arguments else "",
                      [], f"ok={not err} {int((time.time()-t0)*1000)}ms", ip)

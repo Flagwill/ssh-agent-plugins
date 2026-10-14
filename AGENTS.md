@@ -143,11 +143,22 @@ systemctl restart homelab-web homelab-execd
 10. **`run_read`/`run_user` 会把以 `-i` 开头的参数当交互参数拒绝**（防 `ssh -i`/交互式 flag）。
     踩坑：`grep -i pattern file` 因此整条被拒，一度误判成 openclaw.json 有非 UTF-8 字节
     （实测纯 ASCII）。绕法：`bash -lc "..."` 把整条命令塞进单个参数，或不用 `-i`。
-11. **`ls`/`cat` 只在只读白名单，不在 user_whitelist**：列目录/读文件用 `run_read`；
-    `run_user` 只认 python3/node/grep/jq/bash 等 41 项。另外 codemode 桥对 error 返回
-    会抛 `Invalid MCP tools/call structured content`——看到它先查白名单/拒绝规则，不是网络问题。
+11. **MCP 工具必须返回 JSON *object*，不能返回 list**；错误也不能给 `structuredContent`
+    传 `null`。两条同时踩过（2026-10-14 修 `hosts` 时发现）：
+    - `tool_hosts` 返回 list → 客户端（pi/codex/opencode 的 MCP SDK）校验失败
+      `Invalid MCP tools/call structured content`，工具整体不可用。已改为
+      `return {"hosts": out}`，并在 `call_tool()` 加 `_normalize()` 兜底。
+    - `mcp_stdio` 错误时发 `"structuredContent": None`。校验逻辑是
+      `!== undefined && !isObject(...)`，**显式 null ≠ 缺失**，null 同样触发报错。
+      错误一律只走 `content` + `isError: true`，不给 `structuredContent` 键。
+    教训：报错文案与真实原因无关，看到这句先查服务端返回值类型/键，别去查白名单
+    （白名单错误自己会返回 `{"error": ...}` 的明确文案）。
+    新增工具后按 §7 的工具矩阵过一遍再部署。
 12. **mcp 用户的家目录是 `/opt/homelab`（不是 `/home/mcp`）**：其 `authorized_keys` 在
     `/opt/homelab/.ssh/authorized_keys`（mcp 自写即可，见 §3.1）。
+    顺带：装包时 `tar czf /tmp/...` 打在本机、`cat > /tmp/...` 上传 ali **会被拒绝**
+    ——ali 的 `/tmp` 有粘着位且历史上传者（admin）不同属主；mcp 可写 `/opt/homelab`，
+    所以直接用 `/opt/homelab/.deploy-$$.tgz` 命名避开同文件覆盖，部署完删掉。
 13. **openclaw CLI 每次调用启动约 20s**：`mcp add/probe/reload` 都慢，给它留足 timeout。
 14. **PWA 部署后看不到新 UI**：旧 `sw.js` 是 cache-first，会一直吐部署前的 HTML/JS。
     已改成 network-first（外壳）+ `Cache-Control: no-cache` + controllerchange 自动 reload；
@@ -159,6 +170,15 @@ systemctl restart homelab-web homelab-execd
 
 - MCP 手测：`printf '%s\n' '<jsonrpc 行>' | HOMELAB_AGENT=pi ~/.local/bin/homelab-mcp`
   （initialize → notifications/initialized → tools/list → tools/call）。
+- **工具矩阵回归（动了 tools.py / mcp_stdio.py 必跑）**：对 16 个工具逐个
+  tools/call（成功路径 + 错误路径都要），断言 `result.structuredContent` 要么是
+  dict、要么**没有这个键**，绝不能是 list / null / string（见 §6 第 11 条）。
+  本地脚本用 `tomllib` 加载 `hosts.toml`，但要把 `db` 改指 `/tmp`——否则
+  `Path('/var/lib/homelab').mkdir` 直接 PermissionError。校验逻辑复刻
+  `@pi/mcp` 的 `validateCallToolResult`。
+  部署后的最终判据是 codemode 脚本调 `mcp__homelab__*`；**但会话内的 MCP 是长连接，
+  代码改了不会自动重载**，先 `pkill -f "homelab-mcpd --agent pi"` 再测，
+  否则测到的是旧代码（曾因此误判“没修好”）。
 - Web：curl 登录拿 cookie（`-H 'X-HL-Request: 1'`），再打 `/home/api/*`。
 - 手机视口：本地 `/tmp/pwtest`（puppeteer-core + 本机 Chrome）390×844 模拟，
   验登录持久化/触达目标/图标不透明（canvas 读角点 alpha）。

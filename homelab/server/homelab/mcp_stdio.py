@@ -97,11 +97,17 @@ class Server:
             result = tools.call_tool(self.cfg, self.actor, name, arguments,
                                      _peer_ip())
             text = json.dumps(result, ensure_ascii=False, default=str)
-            is_err = isinstance(result, dict) and bool(result.get("error"))
-            return {"jsonrpc": "2.0", "id": mid, "result": {
-                "content": [{"type": "text", "text": text}],
-                "structuredContent": result if not is_err else None,
-                "isError": is_err}}
+            is_err = bool(result.get("error"))
+            # 注意: 错误时【不要】给 structuredContent 传 null。MCP 客户端的校验是
+            #   value.structuredContent !== undefined && !isObject(它) → 抛错
+            # 即显式 null 与“缺失”语义不同, null 会让整个调用以
+            # "Invalid MCP tools/call structured content" 失败
+            # (报错信息与真实原因无关, 极难排查)。错误一律只走 content/isError。
+            resp = {"content": [{"type": "text", "text": text}],
+                    "isError": is_err}
+            if not is_err:
+                resp["structuredContent"] = result
+            return {"jsonrpc": "2.0", "id": mid, "result": resp}
         if method in ("resources/list", "prompts/list"):
             return {"jsonrpc": "2.0", "id": mid, "result": {method.split("/")[0]: []}}
         return {"jsonrpc": "2.0", "id": mid, "error": {
