@@ -1,7 +1,10 @@
 # Local connection settings and credentials
 *.env
 *.env.*
+# 例外: 配置模板要入库(别人靠它知道该填什么), 别被 *.env.* 一起吞掉
 !.env.example
+!**/*.env.example
+!**/board.env.example
 board.env
 ssh.env
 id_*
